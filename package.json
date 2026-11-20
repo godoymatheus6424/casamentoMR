@@ -1,0 +1,14 @@
+{
+  "name": "planejador-casamento",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Site para planejamento de casamento: visão geral, tarefas, fornecedores, contratos, orçamento, convidados, mesas e mais.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

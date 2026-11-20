@@ -1,0 +1,6 @@
+data
+node_modules
+.git
+.vscode
+*.md
+iniciar.bat
