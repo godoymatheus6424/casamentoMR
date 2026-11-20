@@ -1,6 +1,6 @@
 import { state, update } from '../store.js';
 import { html, icon, money, moneyShort, fmtDate, fmtDateLong, fmtDateShort, todayISO, daysBetween, progress, badge, plural, sum, run } from '../ui.js';
-import { coupleTitle, taskDue, guestPeople, budgetCats, contractedVendors, mapsLink } from '../domain.js';
+import { coupleTitle, taskDue, guestPeople, contractedVendors, mapsLink, missingCategories, vendorsLink } from '../domain.js';
 import { weddingForm, togglePaid } from '../forms.js';
 
 function countdown(days) {
@@ -58,8 +58,7 @@ export default {
     // Fornecedores
     const vContr = contractedVendors();
     const vOpen = I.vendors.filter((v) => ['pesquisando', 'orcamento', 'negociando'].includes(v.status || 'pesquisando')).length;
-    const contractedCats = new Set(vContr.map((v) => v.category));
-    const missing = budgetCats().filter((c) => !contractedCats.has(c.name) && c.name !== 'Outros / Imprevistos');
+    const { missing } = missingCategories();
 
     const pinned = I.notes.filter((n) => n.pinned).slice(0, 3);
     const onboarding = !s.partner1 && !s.partner2 && !s.date;
@@ -153,7 +152,7 @@ export default {
 
           ${missing.length ? html`<section class="card">
             <header class="card-head"><h2>Ainda falta contratar</h2><a href="#/fornecedores" class="link-more">Fornecedores ${icon('chevron')}</a></header>
-            <div class="tag-cloud">${missing.map((c) => html`<span class="tag">${c.name}</span>`)}</div>
+            <div class="tag-cloud">${missing.map((c) => html`<a class="tag-btn" href="${vendorsLink(c.name)}">${c.name}</a>`)}</div>
           </section>` : ''}
 
           ${pinned.length ? html`<section class="card">

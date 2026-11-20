@@ -308,6 +308,7 @@ input[type=date], input[type=time] { appearance: none; -webkit-appearance: none;
 .card-foot strong { color: var(--ink); }
 .link-more { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; color: var(--accent); font-weight: 600; white-space: nowrap; }
 .link-more .ic { width: 15px; height: 15px; }
+button.link-more { border: 0; background: none; padding: 4px 0; cursor: pointer; }
 
 .list { display: grid; }
 .row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); min-width: 0; }
@@ -434,6 +435,47 @@ input[type=date], input[type=time] { appearance: none; -webkit-appearance: none;
 .vision { margin: 0 18px 16px; padding: 12px 16px; border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 0 12px 12px 0; font-family: var(--serif); font-size: 18px; font-style: italic; white-space: pre-wrap; }
 .tag-cloud { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 18px 16px; }
 .tag { padding: 5px 12px; border-radius: 999px; background: var(--surface-2); font-size: 13px; color: var(--ink-2); }
+.tag-btn {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 5px 13px;
+  border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2);
+  font-size: 13.5px; font-weight: 500; color: var(--ink-2); cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.tag-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.tag-btn.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.tag-btn .ic { width: 14px; height: 14px; }
+.tag-n { font-size: 11.5px; font-weight: 700; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-grid; place-items: center; background: var(--surface); color: var(--ink-2); }
+.tag-btn.active .tag-n { background: color-mix(in srgb, var(--accent-ink) 25%, transparent); color: var(--accent-ink); }
+.skipped-tag { background: transparent; border-style: dashed; color: var(--muted); }
+.pill-wrap { position: relative; display: inline-flex; }
+.pill-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 30;
+  width: max-content; min-width: 230px; max-width: min(320px, calc(100vw - 24px));
+  display: grid; gap: 2px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-lg);
+  animation: popIn .14s ease;
+}
+@keyframes popIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.pop-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 42px; padding: 8px 12px;
+  border: 0; border-radius: 10px; background: none; color: var(--ink-2); font-size: 14px; text-align: left;
+}
+.pop-item:hover, .pop-item:focus-visible { background: var(--surface-2); outline: none; }
+.pop-item .ic { width: 18px; height: 18px; color: var(--muted); }
+.pop-item.primary { background: var(--accent-soft); color: var(--accent); }
+.pop-item.primary .ic { color: var(--accent); }
+.pop-item.primary:hover, .pop-item.primary:focus-visible { background: color-mix(in srgb, var(--accent) 20%, var(--surface)); }
+.missing-card { margin-bottom: 14px; }
+.missing-card .tag-cloud { padding-bottom: 12px; }
+.missing-card.collapsed .card-head { padding-bottom: 16px; }
+.missing-toggle { display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 0; color: inherit; text-align: left; }
+.missing-toggle .chev { width: 18px; height: 18px; color: var(--muted); transform: rotate(90deg); transition: transform .2s; }
+.missing-card.collapsed .chev { transform: rotate(0deg); }
+.missing-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 18px 16px; }
+.missing-hint { padding: 0 18px 14px; color: var(--muted); font-size: 13px; }
+.skipped { padding: 12px 18px 4px; border-top: 1px dashed var(--line); display: grid; gap: 8px; }
+.skipped small { color: var(--muted); }
+.skipped .tag-cloud { padding: 0 0 12px; }
 .mini-notes { display: grid; gap: 8px; padding: 0 18px 16px; }
 .mini-note { display: block; padding: 12px 14px; border-radius: 12px; }
 .mini-note p { color: var(--ink-2); font-size: 13.5px; margin-top: 2px; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

@@ -82,6 +82,15 @@ export function vendorCategoryOptions(current) {
   if (current && !list.includes(current)) list.push(current);
   return list;
 }
+// Categorias do orçamento sem fornecedor contratado ("ainda falta contratar").
+// Categorias marcadas como "não vamos contratar" (skip) vão para a lista de ocultas.
+export function missingCategories() {
+  const contracted = new Set(state.items.vendors.filter((v) => v.status === 'contratado').map((v) => v.category));
+  const open = budgetCats().filter((c) => !contracted.has(c.name) && c.name !== 'Outros / Imprevistos');
+  return { missing: open.filter((c) => !c.skip), skipped: open.filter((c) => c.skip) };
+}
+export const vendorsLink = (category) => `#/fornecedores?cat=${encodeURIComponent(category)}`;
+
 export const paymentsOf = (vendorId) => state.items.payments.filter((p) => p.vendorId === vendorId);
 export const paidOf = (vendorId) => sum(paymentsOf(vendorId).filter((p) => p.paid), (p) => p.amount);
 export const contractedVendors = () => state.items.vendors.filter((v) => v.status === 'contratado');
