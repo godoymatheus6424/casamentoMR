@@ -130,7 +130,8 @@ export function parseMoney(s) {
 export function fmtSize(b) {
   if (b < 1024) return `${b} B`;
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
-  return `${(b / 1024 / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} MB`;
+  if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} MB`;
+  return `${(b / 1024 / 1024 / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} GB`;
 }
 export const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 export const sum = (arr, fn) => arr.reduce((a, x) => a + (Number(fn(x)) || 0), 0);

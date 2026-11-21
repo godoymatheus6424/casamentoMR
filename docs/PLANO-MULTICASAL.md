@@ -1,0 +1,53 @@
+# Plano: abrir o planejador para outros casais
+
+Modelo de receita: assinatura **R$ 9,90/mês** ou **R$ 89/ano**, com **14 dias grátis** com tudo liberado.
+
+## Fase 1: base multi-casal (em andamento, branch `multi-casal`)
+
+| Item | Status |
+|---|---|
+| Cada casal tem seu próprio **espaço** (workspace), com dados e arquivos isolados | ✅ |
+| Migração automática do banco atual (o casamento existente vira o 1º espaço, com plano vitalício e backup feito antes de migrar) | ✅ |
+| Cadastro público por e-mail (ligado com `SIGNUP_OPEN=1`), com aceite de termos | ✅ |
+| Login por e-mail (quem já usa usuário continua entrando normalmente) | ✅ |
+| "Esqueci minha senha" com link por e-mail (Resend) | ✅ |
+| Período de teste; quando acaba sem assinatura, o espaço fica **só leitura** (nada é apagado) | ✅ |
+| Limite de armazenamento por espaço | ✅ |
+| Tipos de acesso: **Noivo(a)**, **Assessoria** e **Família/amigo**. Só os noivos adicionam, removem ou mudam acessos | ✅ |
+| **Perfil da assessoria:** uma conta só, com acesso a vários casamentos e troca entre eles ("Meus casamentos"). Os noivos dão acesso informando o e-mail dela | ✅ |
+| "Sair deste casamento" para quem não é dono(a) (ex.: a assessoria ao fim do contrato) | ✅ |
+| A assessoria **abre, baixa e envia contratos** e demais documentos do casamento (requisito: manter isso mesmo se um dia houver opção de esconder a parte financeira) | ✅ |
+| Exportar dados e **excluir conta** (LGPD) | ✅ |
+| Ferramenta de administração (`node admin.js`) para listar espaços e liberar planos manualmente | ✅ |
+| Rascunho de Termos de Uso e Política de Privacidade | ✅ rascunho, **revisar com advogado** |
+
+## Fase 2: cobrança
+
+- Escolher o meio de pagamento (Asaas, Mercado Pago, Pagar.me, Stripe…) comparando a taxa fixa por cobrança, o que mais pesa em R$ 9,90, e o suporte a Pix Automático.
+- Checkout de assinatura mensal e anual, com webhook que atualiza `plan` e `paid_until` do espaço.
+- E-mails automáticos: boas-vindas, "seu teste acaba em 3 dias", pagamento recebido, falha de pagamento.
+- Página "Assinatura" com troca de plano e cancelamento.
+
+## Fase 3: lançamento
+
+- Página de apresentação (landing page) com preços.
+- Confirmação de e-mail no cadastro.
+- Backup automático fora da VPS (ex.: bucket S3/R2) e monitoramento (uptime e erros).
+- Painel administrativo simples (espaços, receita, uso).
+- Testes com 5 a 10 casais antes de divulgar.
+
+## Fase 4: crescimento
+
+- **Plano para assessoras:** um login com vários casamentos (o modelo de dados já suporta: um usuário pode pertencer a vários espaços).
+- Site do casal com confirmação de presença (RSVP) online para os convidados.
+- Divulgação: Instagram/TikTok, grupos de noivas, Pinterest e parcerias com assessoras.
+
+## Variáveis de ambiente novas
+
+| Variável | Para quê |
+|---|---|
+| `SIGNUP_OPEN=1` | Libera o cadastro público. Sem ela, funciona como antes: um casamento, com código de configuração. |
+| `APP_URL=https://seu-dominio` | **Obrigatória em produção** para os links dos e-mails. |
+| `RESEND_API_KEY`, `MAIL_FROM` | Envio de e-mails (ex.: `MAIL_FROM="Planejador <nao-responda@seudominio.com.br>"`). Sem elas, o link aparece só no log do servidor. |
+| `TRIAL_DAYS` | Dias de teste grátis (padrão 14). |
+| `QUOTA_MB` | Armazenamento por espaço (padrão 1024). |

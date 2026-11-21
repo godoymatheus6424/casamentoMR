@@ -11,7 +11,8 @@ ENV NODE_ENV=production \
     TRUST_PROXY=1
 
 WORKDIR /app
-COPY package.json server.js ./
+COPY package.json server.js admin.js ./
+COPY lib ./lib
 COPY public ./public
 
 RUN mkdir -p /data && chown node:node /data

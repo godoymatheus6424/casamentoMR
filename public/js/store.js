@@ -3,7 +3,9 @@ import { api } from './api.js';
 export const COLLS = ['vendors', 'payments', 'budget', 'tasks', 'guests', 'tables', 'timeline', 'gifts', 'notes'];
 
 export const state = {
+  status: null,      // /api/status: cadastro aberto, preços, dias de teste…
   user: null,
+  workspace: null,   // casamento atual: plano, acesso, armazenamento, papel
   users: [],
   settings: {},
   items: Object.fromEntries(COLLS.map((c) => [c, []])),
@@ -25,6 +27,16 @@ export async function loadAll() {
   state.loadedAt = Date.now();
   emit();
 }
+
+export async function refreshMe() {
+  const me = await api('GET', '/api/me');
+  state.user = me.user;
+  state.workspace = me.workspace;
+  state.workspaceCount = me.workspaceCount || 1;
+  return me;
+}
+// Quando o servidor recusa uma edição por causa do plano (402), atualiza o aviso na tela.
+window.addEventListener('plan:blocked', () => { refreshMe().then(emit).catch(() => {}); });
 
 export const byId = (coll, id) => state.items[coll].find((x) => x.id === id);
 
@@ -75,6 +87,7 @@ export async function uploadFile(file, { category = 'outros', vendorId = '', not
     },
   });
   state.files.unshift(meta);
+  if (state.workspace) state.workspace.usedBytes += meta.size;
   emit();
   return meta;
 }
@@ -87,6 +100,8 @@ export async function updateFile(id, patch) {
 }
 export async function deleteFile(id) {
   await api('DELETE', `/api/files/${id}`);
-  state.files = state.files.filter((f) => f.id !== id);
+  const f = state.files.find((x) => x.id === id);
+  if (f && state.workspace) state.workspace.usedBytes = Math.max(0, state.workspace.usedBytes - f.size);
+  state.files = state.files.filter((x) => x.id !== id);
   emit();
 }

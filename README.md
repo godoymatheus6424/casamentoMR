@@ -101,10 +101,25 @@ Também funciona em qualquer serviço com disco persistente (Railway, Render, Fl
 
 Outras opções: `HOST` (padrão `0.0.0.0`) e `MAX_UPLOAD_MB` (padrão 25).
 
+## Vários casais (cadastro aberto)
+
+O mesmo servidor pode atender vários casais, cada um no seu espaço isolado, com teste grátis e assinatura. Com a variável `SIGNUP_OPEN=1` o cadastro público abre; sem ela, o site funciona como uma instalação própria (um casamento). O plano completo, com as fases e as variáveis de ambiente, está em [docs/PLANO-MULTICASAL.md](docs/PLANO-MULTICASAL.md).
+
+Administração pela linha de comando (no Easypanel, pela aba **Console** do app):
+
+```
+su-exec node node admin.js espacos                          # lista os casamentos
+su-exec node node admin.js plano email@x.com anual          # libera um plano (teste, mensal, anual, vitalicio, cancelado)
+su-exec node node admin.js teste email@x.com 7              # estende o teste por 7 dias
+```
+
 ## Estrutura
 
 ```
 server.js            servidor HTTP + API + segurança (sem dependências externas)
+lib/db.js            banco de dados e migrações automáticas
+lib/mail.js          envio de e-mails (Resend)
+admin.js             ferramenta de administração (planos, lista de casais)
 Dockerfile           imagem para o Easypanel / Docker
 public/index.html    página única do app
 public/css/style.css visual responsivo (celular, tablet e desktop; claro e escuro)

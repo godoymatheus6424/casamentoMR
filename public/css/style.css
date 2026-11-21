@@ -190,8 +190,58 @@ input[type=date], input[type=time] { appearance: none; -webkit-appearance: none;
 .auth-card h1 { font-size: 34px; text-align: center; }
 .auth-mark { width: 56px; height: 56px; margin: 0 auto 4px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
 .auth-mark .ic { width: 28px; height: 28px; }
-.auth-foot { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.auth-foot { display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 6px; color: var(--muted); font-size: 13px; }
 .auth-foot .ic { width: 16px; height: 16px; }
+.auth-foot a:hover { color: var(--accent); }
+.auth-card.wide { max-width: 480px; }
+.auth-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.auth-switch { text-align: center; font-size: 14px; color: var(--muted); margin-top: 4px; }
+.auth-switch .link { font-weight: 600; }
+.check.terms { align-items: flex-start; font-size: 13.5px; line-height: 1.45; }
+.check.terms input { margin-top: 1px; }
+.form-error.form-ok { color: var(--ok); }
+
+/* Aviso de plano (teste / só leitura) */
+.plan-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px; background: var(--accent-soft); color: var(--ink-2); font-size: 14px; }
+.plan-banner > span { flex: 1 1 200px; }
+.plan-banner > .ic { color: var(--accent); width: 18px; height: 18px; }
+.plan-banner.warn { background: var(--warn-soft); }
+.plan-banner.warn > .ic { color: var(--warn); }
+.plan-banner.danger { background: var(--danger-soft); }
+.plan-banner.danger > .ic { color: var(--danger); }
+@media (min-width: 768px) { .plan-banner { padding: 10px 28px; } }
+@media (min-width: 1100px) { .plan-banner { padding: 10px 40px; } }
+
+/* Plano e armazenamento */
+.plan-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; color: var(--ink-2); }
+.plans { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding-top: 0; }
+.plan-opt { position: relative; display: grid; gap: 2px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; }
+.plan-opt.best { border-color: var(--accent); background: var(--accent-soft); }
+.plan-opt .badge { justify-self: start; margin-bottom: 4px; }
+.plan-opt .price { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.plan-opt .price small { font-size: 13px; font-weight: 500; color: var(--muted); }
+.storage { display: grid; gap: 8px; padding-top: 4px; }
+.storage-line { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; color: var(--muted); }
+/* Assessoria / vários casamentos */
+.avatar.role-planner { background: var(--accent-soft); color: var(--accent); }
+.invite-planner { display: grid; gap: 8px; justify-items: start; border-top: 1px dashed var(--line); }
+.ws-switch { display: flex; align-items: center; justify-content: center; gap: 8px; margin: -8px 0 12px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 10px; background: none; color: var(--accent); font-size: 13px; font-weight: 600; }
+.ws-switch:hover { background: var(--accent-soft); }
+.ws-switch .ic { width: 16px; height: 16px; }
+@media (min-width: 768px) and (max-width: 1099px) { .ws-switch span { display: none; } }
+.more-switch { margin-top: 12px; }
+.ws-list { display: grid; gap: 8px; }
+.ws-item { display: flex; align-items: center; gap: 14px; width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); text-align: left; color: inherit; }
+.ws-item:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.ws-item.current { opacity: .75; cursor: default; }
+.ws-item > .ic { color: var(--muted); }
+.ws-days { flex: none; width: 56px; display: grid; justify-items: center; color: var(--accent); }
+.ws-days strong { font-family: var(--serif); font-size: 26px; line-height: 1; }
+.ws-days small { font-size: 11.5px; color: var(--muted); }
+.ws-info { flex: 1; display: grid; min-width: 0; }
+.ws-info small { color: var(--muted); font-size: 12.5px; }
+.danger-zone { border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
+.danger-zone .card-head h2 .ic { color: var(--danger); }
 
 /* ---------- Estrutura ---------- */
 .shell { min-height: 100dvh; }
@@ -662,6 +712,14 @@ button.link-more { border: 0; background: none; padding: 4px 0; cursor: pointer;
   .tl-item::before { left: 51px; }
   .tl-item time { font-size: 13px; }
 }
+
+/* ---------- Páginas legais ---------- */
+.legal { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; display: grid; gap: 12px; }
+.legal h1 { font-size: 40px; margin-top: 8px; }
+.legal h2 { font-size: 18px; margin-top: 16px; }
+.legal p, .legal li { color: var(--ink-2); }
+.legal ul { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
+.legal-note { background: var(--warn-soft); color: var(--warn) !important; padding: 10px 14px; border-radius: 10px; font-weight: 600; font-size: 14px; }
 
 /* ---------- Impressão ---------- */
 @media print {

@@ -1,7 +1,8 @@
 import { api, setCsrf } from './api.js';
-import { state, loadAll, onChange } from './store.js';
+import { state, loadAll, onChange, refreshMe } from './store.js';
 import { html, icon, closeAllModals, openModal, fmtDateLong, daysBetween, todayISO, plural, applyTheme } from './ui.js';
 import { coupleTitle } from './domain.js';
+import { renderAuth, setLoggedInHandler } from './auth.js';
 import dashboard from './views/dashboard.js';
 import tasks from './views/tasks.js';
 import vendors from './views/vendors.js';
@@ -36,13 +37,14 @@ const app = document.getElementById('app');
 async function boot() {
   applyTheme();
   try {
-    const st = await api('GET', '/api/status');
-    state.maxUploadMb = st.maxUploadMb || 25;
-    if (st.needsSetup) return renderSetup();
+    state.status = await api('GET', '/api/status');
+    state.maxUploadMb = state.status.maxUploadMb || 25;
     let me = null;
-    try { me = await api('GET', '/api/me', undefined, { allow401: true }); }
-    catch (e) { if (e.status !== 401) throw e; }
-    if (!me) return renderLogin();
+    if (!state.status.needsSetup) {
+      try { me = await api('GET', '/api/me', undefined, { allow401: true }); }
+      catch (e) { if (e.status !== 401) throw e; }
+    }
+    if (!me) return renderAuth();
     await startSession(me);
   } catch (e) {
     app.innerHTML = String(html`<div class="boot error">${icon('alert')}<p>Não foi possível conectar ao servidor.</p><small>${e.message}</small><button class="btn btn-primary">Tentar novamente</button></div>`);
@@ -52,111 +54,29 @@ async function boot() {
 
 async function startSession(me) {
   state.user = me.user;
+  state.workspace = me.workspace;
+  state.workspaceCount = me.workspaceCount || 1;
   setCsrf(me.csrf);
   await loadAll();
   renderShell();
 }
+setLoggedInHandler(async () => startSession(await api('GET', '/api/me')));
 
 window.addEventListener('auth:expired', () => {
   if (!state.user) return;
   state.user = null;
   closeAllModals();
-  renderLogin('Sua sessão expirou. Entre novamente.');
+  renderAuth('Sua sessão expirou. Entre novamente.');
 });
+
+// Telas de acesso também respondem ao endereço (#/cadastro, #/esqueci, #/redefinir…)
+window.addEventListener('hashchange', () => { if (!state.user && state.status) renderAuth(); });
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.user && Date.now() - state.loadedAt > 60e3) loadAll().catch(() => {});
+  if (document.visibilityState === 'visible' && state.user && Date.now() - state.loadedAt > 60e3) {
+    refreshMe().then(loadAll).catch(() => {});
+  }
 });
-
-// ---------------------------------------------------------------------------
-// Login e primeiro acesso
-// ---------------------------------------------------------------------------
-function authScreen(inner) {
-  app.innerHTML = String(html`<div class="auth">
-    <div class="auth-card">
-      <div class="auth-mark">${icon('heart')}</div>
-      ${inner}
-    </div>
-    <p class="auth-foot">${icon('shield')} Acesso privado e protegido</p>
-  </div>`);
-  app.querySelectorAll('[data-pw]').forEach((b) => {
-    b.onclick = () => {
-      const input = b.parentElement.querySelector('input');
-      input.type = input.type === 'password' ? 'text' : 'password';
-      b.classList.toggle('on', input.type === 'text');
-    };
-  });
-}
-const pwField = (id, name, label, auto) => html`<div class="field"><label for="${id}">${label}</label><div class="pw"><input id="${id}" type="password" name="${name}" autocomplete="${auto}" required><button type="button" class="pw-toggle" data-pw aria-label="Mostrar senha">${icon('eye')}</button></div></div>`;
-
-function renderLogin(msg = '') {
-  authScreen(html`<h1>Bem-vindos de volta</h1>
-    <p class="muted center">Entre para continuar o planejamento.</p>
-    <form id="login" class="stack" autocomplete="on" novalidate>
-      <div class="field"><label for="lu">Usuário</label><input id="lu" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
-      ${pwField('lp', 'password', 'Senha', 'current-password')}
-      <label class="check"><input type="checkbox" name="remember" checked><span>Manter conectado neste dispositivo</span></label>
-      <p class="form-error" role="alert">${msg}</p>
-      <button class="btn btn-primary btn-block" type="submit">Entrar</button>
-    </form>`);
-  const f = app.querySelector('#login');
-  const err = f.querySelector('.form-error');
-  if (matchMedia('(pointer: fine)').matches) f.username.focus();
-  f.onsubmit = async (e) => {
-    e.preventDefault();
-    const btn = f.querySelector('[type=submit]');
-    if (!f.username.value.trim() || !f.password.value) { err.textContent = 'Informe usuário e senha.'; return; }
-    btn.disabled = true; btn.classList.add('loading'); err.textContent = '';
-    try {
-      await api('POST', '/api/login', { username: f.username.value.trim(), password: f.password.value, remember: f.remember.checked }, { allow401: true });
-      await startSession(await api('GET', '/api/me'));
-    } catch (ex) {
-      err.textContent = ex.message;
-      btn.disabled = false; btn.classList.remove('loading');
-      f.password.value = '';
-      f.password.focus();
-    }
-  };
-}
-
-function renderSetup() {
-  authScreen(html`<h1>Vamos começar</h1>
-    <p class="muted center">Crie o acesso de vocês. Depois você poderá adicionar seu par como outro usuário.</p>
-    <form id="setup" class="stack" novalidate>
-      <div class="two">
-        <div class="field"><label for="sp1">Nome de um(a) noivo(a)</label><input id="sp1" name="partner1" autocomplete="off"></div>
-        <div class="field"><label for="sp2">Nome do(a) outro(a)</label><input id="sp2" name="partner2" autocomplete="off"></div>
-      </div>
-      <div class="field"><label for="sd">Data do casamento <small>(se já souberem)</small></label><input id="sd" type="date" name="date"></div>
-      <hr>
-      <div class="field"><label for="sn">Seu nome</label><input id="sn" name="name" autocomplete="name" required></div>
-      <div class="field"><label for="su">Usuário para entrar</label><input id="su" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="ex.: ana"></div>
-      ${pwField('spw', 'password', 'Senha (mín. 8 caracteres, com letras e números)', 'new-password')}
-      ${pwField('spw2', 'password2', 'Confirme a senha', 'new-password')}
-      <div class="field"><label for="sc">Código de configuração</label><input id="sc" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" required placeholder="Exibido na janela do servidor"><small>Por segurança, só quem tem acesso ao computador onde o site está rodando consegue criar a primeira conta.</small></div>
-      <p class="form-error" role="alert"></p>
-      <button class="btn btn-primary btn-block" type="submit">Criar acesso</button>
-    </form>`);
-  const f = app.querySelector('#setup');
-  const err = f.querySelector('.form-error');
-  f.onsubmit = async (e) => {
-    e.preventDefault();
-    err.textContent = '';
-    if (f.password.value !== f.password2.value) { err.textContent = 'As senhas não conferem.'; return; }
-    const btn = f.querySelector('[type=submit]');
-    btn.disabled = true; btn.classList.add('loading');
-    try {
-      await api('POST', '/api/setup', {
-        partner1: f.partner1.value, partner2: f.partner2.value, date: f.date.value,
-        name: f.name.value, username: f.username.value, password: f.password.value, code: f.code.value,
-      });
-      await startSession(await api('GET', '/api/me'));
-    } catch (ex) {
-      err.textContent = ex.message;
-      btn.disabled = false; btn.classList.remove('loading');
-    }
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Estrutura principal
@@ -169,6 +89,7 @@ function renderShell() {
         <span class="brand-mark">${icon('heart')}</span>
         <span class="brand-text"><strong id="brand-title"></strong><small id="brand-sub"></small></span>
       </a>
+      ${state.workspaceCount > 1 ? html`<button type="button" class="ws-switch" data-switch title="Trocar de casamento">${icon('users')}<span>Trocar casamento</span></button>` : ''}
       <nav class="nav" aria-label="Seções">
         ${ROUTES.map((r) => html`<a href="#/${r.id}" data-route="${r.id}" title="${r.label}">${icon(r.icon)}<span>${r.label}</span></a>`)}
       </nav>
@@ -177,7 +98,7 @@ function renderShell() {
         <button type="button" class="btn-icon" data-logout title="Sair" aria-label="Sair">${icon('logout')}</button>
       </div>
     </aside>
-    <main class="main" id="main"><div id="view" class="view"></div></main>
+    <main class="main" id="main"><div id="plan-banner"></div><div id="view" class="view"></div></main>
     <nav class="tabbar" aria-label="Navegação rápida">
       ${TABS.map((id) => { const r = ROUTES.find((x) => x.id === id); return html`<a href="#/${r.id}" data-route="${r.id}">${icon(r.icon)}<span>${r.short || r.label}</span></a>`; })}
       <button type="button" data-more>${icon('more')}<span>Mais</span></button>
@@ -185,6 +106,7 @@ function renderShell() {
   </div>`);
   app.querySelector('[data-logout]').onclick = logout;
   app.querySelector('[data-more]').onclick = openMore;
+  app.querySelector('[data-switch]')?.addEventListener('click', openSwitcher);
   if (!shellBound) {
     shellBound = true;
     window.addEventListener('hashchange', () => { if (state.user) { closeAllModals(); renderView(true); } });
@@ -202,24 +124,76 @@ async function logout() {
 
 function openMore() {
   const current = routeFromHash().id;
-  const m = openModal({
+  return openModal({
     title: 'Menu',
     size: 'sheet',
     body: html`<nav class="more-grid">
       ${ROUTES.map((r) => html`<a href="#/${r.id}" class="${r.id === current ? 'active' : ''}">${icon(r.icon)}<span>${r.short || r.label}</span></a>`)}
     </nav>
+    ${state.workspaceCount > 1 ? html`<button type="button" class="btn btn-ghost btn-block more-switch" data-sw>${icon('users')}<span>Trocar de casamento</span></button>` : ''}
     <div class="more-foot"><span class="me">${icon('user')} ${state.user.name}</span><button type="button" class="btn btn-ghost btn-sm" data-out>${icon('logout')}<span>Sair</span></button></div>`,
     onMount(mm) {
       mm.body.querySelectorAll('a').forEach((a) => { a.onclick = () => mm.close(); });
       mm.body.querySelector('[data-out]').onclick = logout;
+      const sw = mm.body.querySelector('[data-sw]');
+      if (sw) sw.onclick = () => { mm.close(); openSwitcher(); };
     },
   });
-  return m;
+}
+
+// Lista dos casamentos da pessoa (assessoras) e troca entre eles
+async function openSwitcher() {
+  let list;
+  try { list = await api('GET', '/api/workspaces'); } catch (e) { return; }
+  const today = todayISO();
+  const ROLE = { owner: 'Noivo(a)', couple: 'Noivo(a)', planner: 'Assessoria', member: 'Família / amigo' };
+  openModal({
+    title: 'Meus casamentos',
+    body: html`<div class="ws-list">${list.map((w) => {
+      const days = w.date ? daysBetween(today, w.date) : null;
+      return html`<button type="button" class="ws-item ${w.current ? 'current' : ''}" data-ws="${w.id}" ${w.current ? 'disabled' : ''}>
+        <span class="ws-days">${days == null ? '—' : days > 0 ? html`<strong>${days}</strong><small>${days === 1 ? 'dia' : 'dias'}</small>` : days === 0 ? html`<strong>Hoje</strong>` : html`<small>realizado</small>`}</span>
+        <span class="ws-info"><strong>${w.name}</strong><small>${w.date ? fmtDateLong(w.date) : 'Data a definir'}${w.place ? ` · ${w.place}` : ''}</small><small>${ROLE[w.role] || ''}${w.access !== 'full' ? ' · só leitura' : ''}</small></span>
+        ${w.current ? html`<span class="badge b-ok">aberto</span>` : icon('chevron')}
+      </button>`;
+    })}</div>`,
+    onMount(m) {
+      m.body.onclick = async (e) => {
+        const b = e.target.closest('[data-ws]');
+        if (!b || b.disabled) return;
+        b.classList.add('loading');
+        try {
+          await api('POST', '/api/workspaces/switch', { id: b.dataset.ws });
+          closeAllModals();
+          history.replaceState(null, '', '#/inicio');
+          await startSession(await api('GET', '/api/me'));
+        } catch { b.classList.remove('loading'); }
+      };
+    },
+  });
 }
 
 function routeFromHash() {
   const id = location.hash.replace(/^#\/?/, '').split(/[?/]/)[0] || 'inicio';
   return ROUTES.find((r) => r.id === id) || ROUTES[0];
+}
+
+// Aviso de período de teste / modo só leitura
+function renderBanner() {
+  const el = document.getElementById('plan-banner');
+  const ws = state.workspace;
+  if (!el || !ws) return;
+  let content = '';
+  const manager = ws.role === 'owner' || ws.role === 'couple';
+  if (ws.access === 'readonly') {
+    content = manager
+      ? html`<div class="plan-banner danger">${icon('alert')}<span>${ws.plan === 'trial' ? 'Seu período de teste terminou.' : 'Sua assinatura não está ativa.'} Os dados continuam disponíveis para consulta, mas não dá para editar.</span><a href="#/config" class="btn btn-sm btn-primary">Ver planos</a></div>`
+      : html`<div class="plan-banner danger">${icon('alert')}<span>Este casamento está em modo só leitura: os noivos precisam ativar a assinatura para que todos voltem a editar.</span></div>`;
+  } else if (manager && ws.plan === 'trial' && ws.trialEndsAt) {
+    const days = Math.max(0, Math.ceil((ws.trialEndsAt - Date.now()) / 86400e3));
+    content = html`<div class="plan-banner ${days <= 3 ? 'warn' : ''}">${icon('sparkle')}<span>Teste grátis: ${days <= 0 ? 'termina hoje' : `${plural(days, 'dia restante', 'dias restantes')}`}.</span><a href="#/config" class="link">Ver planos</a></div>`;
+  }
+  el.innerHTML = String(content);
 }
 
 function renderView(navigated) {
@@ -242,6 +216,7 @@ function renderView(navigated) {
   document.getElementById('brand-sub').textContent =
     days == null ? 'Data a definir' : days > 0 ? `faltam ${plural(days, 'dia', 'dias')}` : days === 0 ? 'é hoje!' : fmtDateLong(s.date);
   document.title = `${r.label} · ${title}`;
+  renderBanner();
 
   // preserva o foco (ex.: campo de busca) entre re-renderizações
   const active = document.activeElement;

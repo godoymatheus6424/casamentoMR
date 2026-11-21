@@ -22,6 +22,7 @@ export async function api(method, url, body, opts = {}) {
   let data = null;
   if ((res.headers.get('content-type') || '').includes('json')) data = await res.json().catch(() => null);
   if (res.status === 401 && !opts.allow401) window.dispatchEvent(new Event('auth:expired'));
+  if (res.status === 402) window.dispatchEvent(new Event('plan:blocked'));
   if (!res.ok) throw Object.assign(new Error(data?.error || `Erro ${res.status}`), { status: res.status });
   return data;
 }

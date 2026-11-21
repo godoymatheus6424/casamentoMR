@@ -1,8 +1,8 @@
 // Planejador de Casamento — servidor sem dependências externas (Node.js 22.13+).
+// Vários casais no mesmo servidor: cada casal tem um "espaço" (workspace) isolado.
 // Banco: SQLite embutido (node:sqlite). Senhas: scrypt. Sessões: cookie HttpOnly + token CSRF.
 
 import http from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,6 +10,8 @@ import os from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { BUDGET_CATEGORIES, TASK_TEMPLATE } from './public/js/seed.js';
+import { openDb, helpers, workspaceAccess, PLAN_LABELS, MANAGER_ROLES } from './lib/db.js';
+import { sendMail, emailLayout } from './lib/mail.js';
 
 // ---------------------------------------------------------------------------
 // Configuração (variáveis de ambiente opcionais)
@@ -22,13 +24,20 @@ const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const TMP_DIR = path.join(DATA_DIR, 'tmp');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
+const SIGNUP_OPEN = process.env.SIGNUP_OPEN === '1';
+const APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 25;
 const MAX_UPLOAD = MAX_UPLOAD_MB * 1024 * 1024;
+const QUOTA_MB = Number(process.env.QUOTA_MB) || 1024;
+const QUOTA = QUOTA_MB * 1024 * 1024;
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) || 14;
+const PRICING = { monthly: process.env.PRICE_MONTHLY || '9,90', annual: process.env.PRICE_ANNUAL || '89' };
 const MAX_JSON = 2 * 1024 * 1024;
 const MIN = 60e3, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const SESSION_SHORT = 12 * HOUR;
 const SESSION_LONG = 30 * DAY;
-const MAX_USERS = 6;
+const RESET_TTL = HOUR;
+const MAX_MEMBERS = 8;
 const LOGIN_MAX_PER_IP = 10;      // tentativas por IP a cada 15 min
 const LOCK_AFTER = 5;             // falhas seguidas por usuário
 const LOCK_TIME = 15 * MIN;
@@ -63,66 +72,8 @@ const STATIC_MIME = {
 // ---------------------------------------------------------------------------
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 fs.mkdirSync(TMP_DIR, { recursive: true });
-const db = new DatabaseSync(path.join(DATA_DIR, 'casamento.db'));
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  PRAGMA busy_timeout = 5000;
-  PRAGMA foreign_keys = ON;
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    name TEXT NOT NULL,
-    pass_hash TEXT NOT NULL,
-    failed INTEGER NOT NULL DEFAULT 0,
-    locked_until INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS sessions (
-    token_hash TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    csrf TEXT NOT NULL,
-    ttl INTEGER NOT NULL,
-    persistent INTEGER NOT NULL,
-    created_at INTEGER NOT NULL,
-    last_seen INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL,
-    ip TEXT,
-    ua TEXT
-  );
-  CREATE TABLE IF NOT EXISTS items (
-    id TEXT PRIMARY KEY,
-    coll TEXT NOT NULL,
-    data TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    updated_by INTEGER
-  );
-  CREATE INDEX IF NOT EXISTS idx_items_coll ON items(coll);
-  CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS files (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    ext TEXT NOT NULL,
-    size INTEGER NOT NULL,
-    category TEXT NOT NULL DEFAULT 'outros',
-    vendor_id TEXT,
-    note TEXT,
-    created_at INTEGER NOT NULL,
-    uploaded_by INTEGER
-  );
-`);
-
-const stmtCache = new Map();
-function S(sql) {
-  let s = stmtCache.get(sql);
-  if (!s) { s = db.prepare(sql); stmtCache.set(sql, s); }
-  return s;
-}
-function tx(fn) {
-  db.exec('BEGIN');
-  try { const r = fn(); db.exec('COMMIT'); return r; }
-  catch (e) { db.exec('ROLLBACK'); throw e; }
-}
+const db = openDb(DATA_DIR);
+const { S, tx } = helpers(db);
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -133,6 +84,8 @@ class HttpError extends Error {
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const isUuid = (s) => typeof s === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s);
+const normEmail = (s) => String(s || '').trim().toLowerCase();
+const isEmail = (s) => s.length <= 254 && /^[^\s@]{1,64}@[^\s@.]+(\.[^\s@.]+)+$/.test(s);
 
 function safeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
@@ -145,6 +98,9 @@ function isHttps(req) {
 function clientIp(req) {
   if (TRUST_PROXY && req.headers['x-forwarded-for']) return String(req.headers['x-forwarded-for']).split(',')[0].trim();
   return req.socket.remoteAddress || '?';
+}
+function appUrl(req) {
+  return APP_URL || `${isHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
 }
 function send(res, status, body, headers = {}) {
   const data = JSON.stringify(body);
@@ -212,51 +168,58 @@ async function hashPassword(pw) {
 async function verifyPassword(pw, stored) {
   const [alg, N, r, p, salt, hash] = String(stored).split('$');
   if (alg !== 'scrypt') return false;
-  const key = await scryptAsync(pw.normalize('NFKC'), Buffer.from(salt, 'base64'), { N: +N, r: +r, p: +p, maxmem: SCRYPT.maxmem });
+  const key = await scryptAsync(String(pw).normalize('NFKC'), Buffer.from(salt, 'base64'), { N: +N, r: +r, p: +p, maxmem: SCRYPT.maxmem });
   const expected = Buffer.from(hash, 'base64');
   return expected.length === key.length && crypto.timingSafeEqual(expected, key);
 }
 const DUMMY_HASH = await hashPassword(crypto.randomBytes(16).toString('hex'));
 
-function validateNewUser(b) {
-  const name = String(b.name || '').trim();
-  const username = String(b.username || '').trim();
-  const password = String(b.password || '');
-  if (!name || name.length > 60) throw new HttpError(400, 'Informe um nome (até 60 caracteres).');
-  if (!/^[a-zA-Z0-9._-]{3,32}$/.test(username)) throw new HttpError(400, 'O usuário deve ter de 3 a 32 caracteres: letras, números, ponto, hífen ou sublinhado.');
-  validatePassword(password);
-  return { name, username, password };
-}
 function validatePassword(pw) {
   if (typeof pw !== 'string' || pw.length < 8) throw new HttpError(400, 'A senha deve ter pelo menos 8 caracteres.');
   if (pw.length > 200) throw new HttpError(400, 'A senha é longa demais.');
   if (!/[A-Za-zÀ-ÿ]/.test(pw) || !/\d/.test(pw)) throw new HttpError(400, 'A senha deve conter letras e números.');
 }
+function validateNewUser(b) {
+  const name = String(b.name || '').trim();
+  const email = normEmail(b.email);
+  const password = String(b.password || '');
+  if (!name || name.length > 60) throw new HttpError(400, 'Informe um nome (até 60 caracteres).');
+  if (!isEmail(email)) throw new HttpError(400, 'Informe um e-mail válido.');
+  validatePassword(password);
+  return { name, email, password };
+}
+function emailTaken(email, exceptUserId = 0) {
+  return !!S('SELECT 1 FROM users WHERE (email = ? COLLATE NOCASE OR username = ?) AND id <> ?').get(email, email, exceptUserId);
+}
 
 // ---------------------------------------------------------------------------
-// Limite de tentativas
+// Limite de tentativas (por IP e por tipo de ação)
 // ---------------------------------------------------------------------------
 const attempts = new Map();
-function rateBucket(ip) {
+function rateBucket(key, max = LOGIN_MAX_PER_IP) {
   const now = Date.now();
-  let a = attempts.get(ip);
-  if (!a || a.reset < now) { a = { n: 0, reset: now + 15 * MIN }; attempts.set(ip, a); }
-  if (a.n >= LOGIN_MAX_PER_IP) {
-    throw new HttpError(429, `Muitas tentativas. Tente novamente em ${Math.ceil((a.reset - now) / MIN)} min.`);
-  }
+  let a = attempts.get(key);
+  if (!a || a.reset < now) { a = { n: 0, reset: now + 15 * MIN }; attempts.set(key, a); }
+  if (a.n >= max) throw new HttpError(429, `Muitas tentativas. Tente novamente em ${Math.ceil((a.reset - now) / MIN)} min.`);
   return a;
 }
 
 // ---------------------------------------------------------------------------
 // Sessões
 // ---------------------------------------------------------------------------
-function createSession(req, res, userId, persistent) {
+// Casamento aberto ao entrar: o último usado; senão, o próprio; senão, o mais recente.
+function defaultWorkspace(userId) {
+  const last = S('SELECT last_workspace_id AS id FROM users WHERE id = ?').get(userId)?.id;
+  if (last && S('SELECT 1 FROM memberships WHERE user_id = ? AND workspace_id = ?').get(userId, last)) return last;
+  return S("SELECT workspace_id FROM memberships WHERE user_id = ? ORDER BY (role = 'owner') DESC, created_at DESC LIMIT 1").get(userId)?.workspace_id || null;
+}
+function createSession(req, res, userId, persistent, workspaceId) {
   const token = crypto.randomBytes(32).toString('base64url');
   const now = Date.now();
   const ttl = persistent ? SESSION_LONG : SESSION_SHORT;
-  S(`INSERT INTO sessions (token_hash, user_id, csrf, ttl, persistent, created_at, last_seen, expires_at, ip, ua)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
-    sha256(token), userId, crypto.randomBytes(24).toString('base64url'), ttl, persistent ? 1 : 0,
+  S(`INSERT INTO sessions (token_hash, user_id, workspace_id, csrf, ttl, persistent, created_at, last_seen, expires_at, ip, ua)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    sha256(token), userId, workspaceId, crypto.randomBytes(24).toString('base64url'), ttl, persistent ? 1 : 0,
     now, now, now + ttl, clientIp(req), String(req.headers['user-agent'] || '').slice(0, 250));
   res.setHeader('Set-Cookie', sessionCookie(req, token, persistent ? Math.floor(ttl / 1000) : null));
 }
@@ -265,22 +228,37 @@ function getSession(req) {
   if (!token || token.length > 100) return null;
   const h = sha256(token);
   const now = Date.now();
-  const s = S(`SELECT s.*, u.name, u.username FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`).get(h);
+  const s = S(`SELECT s.*, u.name, u.username, u.email, m.role,
+                      w.name AS ws_name, w.plan, w.trial_ends_at, w.paid_until
+               FROM sessions s
+               JOIN users u ON u.id = s.user_id
+               JOIN memberships m ON m.user_id = s.user_id AND m.workspace_id = s.workspace_id
+               JOIN workspaces w ON w.id = s.workspace_id
+               WHERE s.token_hash = ?`).get(h);
   if (!s) return null;
   if (s.expires_at <= now) { S('DELETE FROM sessions WHERE token_hash = ?').run(h); return null; }
   if (now - s.last_seen > 5 * MIN) {
     S('UPDATE sessions SET last_seen = ?, expires_at = ? WHERE token_hash = ?').run(now, now + s.ttl, h);
   }
-  return { ...s, token, tokenHash: h };
+  return { ...s, token, tokenHash: h, access: workspaceAccess(s, now) };
+}
+function workspaceInfo(s) {
+  const used = S('SELECT COALESCE(SUM(size), 0) AS n FROM files WHERE workspace_id = ?').get(s.workspace_id).n;
+  return {
+    id: s.workspace_id, name: s.ws_name, role: s.role,
+    plan: s.plan, planLabel: PLAN_LABELS[s.plan] || s.plan, access: s.access,
+    trialEndsAt: s.trial_ends_at, paidUntil: s.paid_until,
+    usedBytes: used, quotaBytes: QUOTA,
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Código de configuração (primeiro acesso)
+// Código de configuração (instalação própria, sem cadastro público)
 // ---------------------------------------------------------------------------
 const userCount = () => S('SELECT COUNT(*) AS n FROM users').get().n;
 let setupCode = null;
 function ensureSetupCode() {
-  if (userCount() > 0) { setupCode = null; return; }
+  if (SIGNUP_OPEN || userCount() > 0) { setupCode = null; return; }
   if (!setupCode) {
     const abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
     setupCode = process.env.SETUP_CODE || Array.from({ length: 8 }, () => abc[crypto.randomInt(abc.length)]).join('');
@@ -288,7 +266,7 @@ function ensureSetupCode() {
 }
 
 // ---------------------------------------------------------------------------
-// Dados
+// Dados (sempre filtrados pelo espaço do casal)
 // ---------------------------------------------------------------------------
 function rowToItem(r) {
   return { ...JSON.parse(r.data), id: r.id, _created: r.created_at, _updated: r.updated_at, _by: r.updated_by };
@@ -307,19 +285,18 @@ function checkColl(c) {
   if (!COLLECTIONS.has(c)) throw new HttpError(404, 'Coleção desconhecida.');
   return c;
 }
-function insertItem(coll, data, userId, now = Date.now()) {
+function insertItem(ws, coll, data, userId, now = Date.now()) {
   const id = crypto.randomUUID();
-  S('INSERT INTO items (id, coll, data, created_at, updated_at, updated_by) VALUES (?,?,?,?,?,?)')
-    .run(id, coll, JSON.stringify(data), now, now, userId);
+  S('INSERT INTO items (id, workspace_id, coll, data, created_at, updated_at, updated_by) VALUES (?,?,?,?,?,?,?)')
+    .run(id, ws, coll, JSON.stringify(data), now, now, userId);
   return { ...data, id, _created: now, _updated: now, _by: userId };
 }
-function getSettings() {
-  const r = S('SELECT value FROM settings WHERE key = ?').get('wedding');
-  return r ? JSON.parse(r.value) : {};
+function getSettings(ws) {
+  const r = S('SELECT settings FROM workspaces WHERE id = ?').get(ws);
+  return r ? JSON.parse(r.settings) : {};
 }
-function setSettings(obj) {
-  S('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
-    .run('wedding', JSON.stringify(obj));
+function coupleName(s) {
+  return [s.partner1, s.partner2].map((x) => String(x || '').trim()).filter(Boolean).join(' & ') || 'Nosso casamento';
 }
 function fileToJson(f) {
   return {
@@ -335,15 +312,49 @@ function contentDisposition(inline, name) {
   const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
   return `${inline ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
-function seedWorkspace(userId, b) {
+function vendorInWorkspace(ws, id) {
+  return isUuid(id) && !!S("SELECT 1 FROM items WHERE id = ? AND coll = 'vendors' AND workspace_id = ?").get(id, ws);
+}
+function exportWorkspace(ws) {
+  const items = {};
+  for (const c of COLLECTIONS) items[c] = [];
+  for (const r of S('SELECT * FROM items WHERE workspace_id = ? ORDER BY created_at').all(ws)) if (items[r.coll]) items[r.coll].push(rowToItem(r));
+  return { items, files: S('SELECT * FROM files WHERE workspace_id = ? ORDER BY created_at DESC').all(ws).map(fileToJson) };
+}
+
+// Cria usuário + espaço do casal + modelos iniciais. Chamar dentro de tx().
+function createAccount({ name, email, hash, partner1, partner2, date, plan }) {
   const now = Date.now();
-  setSettings({
-    partner1: String(b.partner1 || '').trim().slice(0, 60),
-    partner2: String(b.partner2 || '').trim().slice(0, 60),
-    date: /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : '',
+  const r = S('INSERT INTO users (username, email, name, pass_hash, terms_accepted_at, created_at) VALUES (?,?,?,?,?,?)')
+    .run(email, email, name, hash, now, now);
+  const userId = Number(r.lastInsertRowid);
+  const settings = {
+    partner1: String(partner1 || '').trim().slice(0, 60),
+    partner2: String(partner2 || '').trim().slice(0, 60),
+    date: /^\d{4}-\d{2}-\d{2}$/.test(date || '') ? date : '',
+  };
+  const ws = crypto.randomUUID();
+  S('INSERT INTO workspaces (id, name, settings, plan, trial_ends_at, created_at) VALUES (?,?,?,?,?,?)')
+    .run(ws, coupleName(settings), JSON.stringify(settings), plan, plan === 'trial' ? now + TRIAL_DAYS * DAY : null, now);
+  S("INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, ?, 'owner', ?)").run(userId, ws, now);
+  BUDGET_CATEGORIES.forEach(([n, pct], i) => insertItem(ws, 'budget', { name: n, planned: 0, pct, order: i }, userId, now + i));
+  TASK_TEMPLATE.forEach(([period, title], i) => insertItem(ws, 'tasks', { title, period, done: false, order: i }, userId, now + i));
+  return { userId, ws };
+}
+
+function deleteWorkspace(ws) {
+  const fileIds = S('SELECT id FROM files WHERE workspace_id = ?').all(ws).map((f) => f.id);
+  tx(() => {
+    const members = S('SELECT user_id FROM memberships WHERE workspace_id = ?').all(ws).map((m) => m.user_id);
+    S('DELETE FROM items WHERE workspace_id = ?').run(ws);
+    S('DELETE FROM files WHERE workspace_id = ?').run(ws);
+    S('DELETE FROM sessions WHERE workspace_id = ?').run(ws);
+    S('DELETE FROM workspaces WHERE id = ?').run(ws); // memberships saem em cascata
+    for (const uid of members) {
+      if (!S('SELECT 1 FROM memberships WHERE user_id = ?').get(uid)) S('DELETE FROM users WHERE id = ?').run(uid);
+    }
   });
-  BUDGET_CATEGORIES.forEach(([name, pct], i) => insertItem('budget', { name, planned: 0, pct, order: i }, userId, now + i));
-  TASK_TEMPLATE.forEach(([period, title], i) => insertItem('tasks', { title, period, done: false, order: i }, userId, now + i));
+  for (const id of fileIds) fs.rmSync(path.join(UPLOAD_DIR, id), { force: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -353,16 +364,24 @@ const routes = [];
 function route(method, pattern, handler, opts = {}) {
   const keys = [];
   const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '([^/]+)'; }) + '$');
-  routes.push({ method, re, keys, handler, auth: opts.auth !== false });
+  routes.push({ method, re, keys, handler, auth: opts.auth !== false, write: !!opts.write, owner: !!opts.owner, manage: !!opts.manage });
 }
 
 route('GET', '/api/status', ({ res }) => {
-  send(res, 200, { needsSetup: userCount() === 0, maxUploadMb: MAX_UPLOAD_MB });
+  send(res, 200, {
+    needsSetup: !SIGNUP_OPEN && userCount() === 0,
+    signupOpen: SIGNUP_OPEN,
+    maxUploadMb: MAX_UPLOAD_MB,
+    trialDays: TRIAL_DAYS,
+    pricing: PRICING,
+  });
 }, { auth: false });
 
+// Instalação própria (sem cadastro público): primeira conta com código exibido no servidor.
 route('POST', '/api/setup', async ({ req, res }) => {
+  if (SIGNUP_OPEN) throw new HttpError(404, 'Use o cadastro.');
   if (userCount() > 0) throw new HttpError(409, 'O sistema já foi configurado. Faça login.');
-  const rl = rateBucket(clientIp(req));
+  const rl = rateBucket(`setup:${clientIp(req)}`);
   const b = await readJson(req);
   ensureSetupCode();
   if (!safeEqual(String(b.code || '').trim().toUpperCase(), setupCode)) {
@@ -371,25 +390,40 @@ route('POST', '/api/setup', async ({ req, res }) => {
   }
   const u = validateNewUser(b);
   const hash = await hashPassword(u.password);
-  const userId = tx(() => {
+  const acc = tx(() => {
     if (userCount() > 0) throw new HttpError(409, 'O sistema já foi configurado.');
-    const r = S('INSERT INTO users (username, name, pass_hash, created_at) VALUES (?,?,?,?)').run(u.username, u.name, hash, Date.now());
-    const id = Number(r.lastInsertRowid);
-    seedWorkspace(id, b);
-    return id;
+    return createAccount({ ...b, ...u, hash, plan: 'lifetime' });
   });
   setupCode = null;
-  createSession(req, res, userId, true);
+  createSession(req, res, acc.userId, true, acc.ws);
+  send(res, 201, { ok: true });
+}, { auth: false });
+
+// Cadastro público (SIGNUP_OPEN=1): cria a conta com período de teste.
+route('POST', '/api/signup', async ({ req, res }) => {
+  if (!SIGNUP_OPEN) throw new HttpError(403, 'O cadastro não está aberto.');
+  const rl = rateBucket(`signup:${clientIp(req)}`, 5);
+  rl.n++;
+  const b = await readJson(req);
+  if (b.acceptTerms !== true) throw new HttpError(400, 'É preciso aceitar os Termos de Uso e a Política de Privacidade.');
+  const u = validateNewUser(b);
+  if (emailTaken(u.email)) throw new HttpError(409, 'Já existe uma conta com esse e-mail. Faça login ou recupere a senha.');
+  const hash = await hashPassword(u.password);
+  const acc = tx(() => {
+    if (emailTaken(u.email)) throw new HttpError(409, 'Já existe uma conta com esse e-mail.');
+    return createAccount({ ...b, ...u, hash, plan: 'trial' });
+  });
+  createSession(req, res, acc.userId, true, acc.ws);
   send(res, 201, { ok: true });
 }, { auth: false });
 
 route('POST', '/api/login', async ({ req, res }) => {
-  const rl = rateBucket(clientIp(req));
+  const rl = rateBucket(`login:${clientIp(req)}`);
   const b = await readJson(req);
-  const username = String(b.username || '').trim();
+  const login = String(b.username || b.email || '').trim();
   const password = String(b.password || '');
-  if (!username || !password || password.length > 256) throw new HttpError(400, 'Informe usuário e senha.');
-  const user = S('SELECT * FROM users WHERE username = ?').get(username);
+  if (!login || !password || password.length > 256) throw new HttpError(400, 'Informe e-mail e senha.');
+  const user = S('SELECT * FROM users WHERE email = ? COLLATE NOCASE OR username = ? ORDER BY (email IS NOT NULL) DESC LIMIT 1').get(login, login);
   const now = Date.now();
   if (user && user.locked_until > now) {
     throw new HttpError(429, `Acesso bloqueado temporariamente por excesso de tentativas. Tente em ${Math.ceil((user.locked_until - now) / MIN)} min.`);
@@ -403,10 +437,58 @@ route('POST', '/api/login', async ({ req, res }) => {
       S('UPDATE users SET failed = ?, locked_until = ? WHERE id = ?').run(lock ? 0 : failed, lock ? now + LOCK_TIME : 0, user.id);
     }
     await sleep(250 + crypto.randomInt(250));
-    throw new HttpError(401, 'Usuário ou senha incorretos.');
+    throw new HttpError(401, 'E-mail ou senha incorretos.');
   }
+  const ws = defaultWorkspace(user.id);
+  if (!ws) throw new HttpError(403, 'Sua conta não está ligada a nenhum casamento. Fale com quem convidou você.');
   S('UPDATE users SET failed = 0, locked_until = 0 WHERE id = ?').run(user.id);
-  createSession(req, res, user.id, !!b.remember);
+  createSession(req, res, user.id, !!b.remember, ws);
+  send(res, 200, { ok: true });
+}, { auth: false });
+
+route('POST', '/api/password/forgot', async ({ req, res }) => {
+  const rl = rateBucket(`forgot:${clientIp(req)}`, 5);
+  rl.n++;
+  const email = normEmail((await readJson(req)).email);
+  const user = isEmail(email) ? S('SELECT id, name, email FROM users WHERE email = ? COLLATE NOCASE').get(email) : null;
+  if (user) {
+    const token = crypto.randomBytes(32).toString('base64url');
+    const now = Date.now();
+    tx(() => {
+      S('DELETE FROM password_resets WHERE user_id = ?').run(user.id);
+      S('INSERT INTO password_resets (token_hash, user_id, expires_at, created_at) VALUES (?,?,?,?)').run(sha256(token), user.id, now + RESET_TTL, now);
+    });
+    const link = `${appUrl(req)}/#/redefinir?token=${token}`;
+    const mail = emailLayout({
+      title: 'Redefinir sua senha',
+      intro: `Olá, ${user.name}! Recebemos um pedido para redefinir a senha do seu planejador de casamento. O link vale por 1 hora.`,
+      buttonText: 'Criar nova senha',
+      buttonUrl: link,
+      outro: 'Se não foi você, ignore este e-mail: sua senha continua a mesma.',
+    });
+    // Envio em segundo plano: a resposta leva o mesmo tempo existindo ou não a conta.
+    sendMail({ to: user.email, subject: 'Redefinição de senha', ...mail });
+  }
+  await sleep(300 + crypto.randomInt(300));
+  send(res, 200, { ok: true });
+}, { auth: false });
+
+route('POST', '/api/password/reset', async ({ req, res }) => {
+  const rl = rateBucket(`reset:${clientIp(req)}`);
+  const b = await readJson(req);
+  const token = String(b.token || '');
+  const row = token.length >= 20 && token.length <= 100 ? S('SELECT * FROM password_resets WHERE token_hash = ?').get(sha256(token)) : null;
+  if (!row || row.expires_at < Date.now()) {
+    rl.n++;
+    throw new HttpError(400, 'Este link é inválido ou expirou. Peça um novo em "Esqueci minha senha".');
+  }
+  validatePassword(b.password);
+  const hash = await hashPassword(b.password);
+  tx(() => {
+    S('UPDATE users SET pass_hash = ?, failed = 0, locked_until = 0 WHERE id = ?').run(hash, row.user_id);
+    S('DELETE FROM password_resets WHERE user_id = ?').run(row.user_id);
+    S('DELETE FROM sessions WHERE user_id = ?').run(row.user_id);
+  });
   send(res, 200, { ok: true });
 }, { auth: false });
 
@@ -419,8 +501,10 @@ route('GET', '/api/me', ({ req, res, session }) => {
   const headers = {};
   if (session.persistent) headers['Set-Cookie'] = sessionCookie(req, session.token, Math.floor(session.ttl / 1000));
   send(res, 200, {
-    user: { id: session.user_id, name: session.name, username: session.username },
+    user: { id: session.user_id, name: session.name, username: session.username, email: session.email },
     csrf: session.csrf,
+    workspace: workspaceInfo(session),
+    workspaceCount: S('SELECT COUNT(*) AS n FROM memberships WHERE user_id = ?').get(session.user_id).n,
   }, headers);
 });
 
@@ -428,8 +512,14 @@ route('PUT', '/api/me', async ({ req, res, session }) => {
   const b = await readJson(req);
   const name = String(b.name || '').trim();
   if (!name || name.length > 60) throw new HttpError(400, 'Informe um nome (até 60 caracteres).');
-  S('UPDATE users SET name = ? WHERE id = ?').run(name, session.user_id);
-  send(res, 200, { ok: true, name });
+  let email = session.email;
+  if (b.email !== undefined) {
+    email = normEmail(b.email);
+    if (!isEmail(email)) throw new HttpError(400, 'Informe um e-mail válido.');
+    if (emailTaken(email, session.user_id)) throw new HttpError(409, 'Esse e-mail já está em uso por outra conta.');
+  }
+  S('UPDATE users SET name = ?, email = ? WHERE id = ?').run(name, email, session.user_id);
+  send(res, 200, { ok: true, name, email });
 });
 
 route('POST', '/api/password', async ({ req, res, session }) => {
@@ -443,29 +533,111 @@ route('POST', '/api/password', async ({ req, res, session }) => {
   send(res, 200, { ok: true });
 });
 
+// Pessoas com acesso ao casamento
 route('GET', '/api/users', ({ res, session }) => {
-  const users = S('SELECT id, name, username, created_at FROM users ORDER BY id').all()
-    .map((u) => ({ id: u.id, name: u.name, username: u.username, createdAt: u.created_at, isMe: u.id === session.user_id }));
-  send(res, 200, users);
+  const rows = S(`SELECT u.id, u.name, u.username, u.email, u.created_at, m.role
+                  FROM memberships m JOIN users u ON u.id = m.user_id
+                  WHERE m.workspace_id = ? ORDER BY m.created_at, u.id`).all(session.workspace_id);
+  send(res, 200, rows.map((u) => ({
+    id: u.id, name: u.name, email: u.email || '', username: u.username, role: u.role, createdAt: u.created_at, isMe: u.id === session.user_id,
+  })));
 });
 
-route('POST', '/api/users', async ({ req, res }) => {
-  if (userCount() >= MAX_USERS) throw new HttpError(400, `Limite de ${MAX_USERS} usuários atingido.`);
-  const u = validateNewUser(await readJson(req));
-  if (S('SELECT id FROM users WHERE username = ?').get(u.username)) throw new HttpError(409, 'Esse nome de usuário já existe.');
+// Noivos adicionam pessoas: o par, a assessoria ou família/amigos.
+// Se o e-mail já tem conta (ex.: assessora que atende outros casais), ela só ganha acesso a este casamento.
+route('POST', '/api/users', async ({ req, res, session }) => {
+  const ws = session.workspace_id;
+  const n = S('SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ?').get(ws).n;
+  if (n >= MAX_MEMBERS) throw new HttpError(400, `Limite de ${MAX_MEMBERS} pessoas por casamento atingido.`);
+  const b = await readJson(req);
+  const role = ['couple', 'planner', 'member'].includes(b.role) ? b.role : 'member';
+  const email = normEmail(b.email);
+  if (!isEmail(email)) throw new HttpError(400, 'Informe um e-mail válido.');
+  const now = Date.now();
+  const existing = S('SELECT id, name FROM users WHERE email = ? COLLATE NOCASE OR username = ? LIMIT 1').get(email, email);
+  if (existing) {
+    if (S('SELECT 1 FROM memberships WHERE user_id = ? AND workspace_id = ?').get(existing.id, ws)) {
+      throw new HttpError(409, 'Essa pessoa já tem acesso a este casamento.');
+    }
+    S('INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, ?, ?, ?)').run(existing.id, ws, role, now);
+    return send(res, 201, { id: existing.id, name: existing.name, email, role, linked: true });
+  }
+  if (!b.password) throw new HttpError(400, 'Essa pessoa ainda não tem conta: defina uma senha inicial para ela.');
+  const u = validateNewUser(b);
   const hash = await hashPassword(u.password);
-  const r = S('INSERT INTO users (username, name, pass_hash, created_at) VALUES (?,?,?,?)').run(u.username, u.name, hash, Date.now());
-  send(res, 201, { id: Number(r.lastInsertRowid), name: u.name, username: u.username });
-});
+  const id = tx(() => {
+    const r = S('INSERT INTO users (username, email, name, pass_hash, created_at) VALUES (?,?,?,?,?)').run(u.email, u.email, u.name, hash, now);
+    const uid = Number(r.lastInsertRowid);
+    S('INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, ?, ?, ?)').run(uid, ws, role, now);
+    return uid;
+  });
+  send(res, 201, { id, name: u.name, email: u.email, role, linked: false });
+}, { manage: true, write: true });
+
+// Noivos mudam o tipo de acesso de alguém (ex.: marcar o par como noivo(a)).
+route('PUT', '/api/users/:id', async ({ req, res, params, session }) => {
+  const id = Number(params.id);
+  const role = (await readJson(req)).role;
+  if (!['couple', 'planner', 'member'].includes(role)) throw new HttpError(400, 'Tipo de acesso inválido.');
+  if (id === session.user_id) throw new HttpError(400, 'Você não pode mudar o próprio tipo de acesso.');
+  const m = S('SELECT role FROM memberships WHERE user_id = ? AND workspace_id = ?').get(id, session.workspace_id);
+  if (!m) throw new HttpError(404, 'Pessoa não encontrada neste casamento.');
+  if (m.role === 'owner') throw new HttpError(403, 'Não é possível mudar o acesso de quem criou o casamento.');
+  S('UPDATE memberships SET role = ? WHERE user_id = ? AND workspace_id = ?').run(role, id, session.workspace_id);
+  send(res, 200, { ok: true, role });
+}, { manage: true });
 
 route('DELETE', '/api/users/:id', ({ res, params, session }) => {
   const id = Number(params.id);
-  if (id === session.user_id) throw new HttpError(400, 'Você não pode remover o próprio acesso.');
+  if (id === session.user_id) throw new HttpError(400, 'Para sair deste casamento, use "Sair deste casamento".');
   tx(() => {
-    S('DELETE FROM sessions WHERE user_id = ?').run(id);
-    S('DELETE FROM users WHERE id = ?').run(id);
+    const m = S('SELECT role FROM memberships WHERE user_id = ? AND workspace_id = ?').get(id, session.workspace_id);
+    if (!m) throw new HttpError(404, 'Pessoa não encontrada neste casamento.');
+    if (m.role === 'owner') throw new HttpError(403, 'Não é possível remover quem criou o casamento.');
+    S('DELETE FROM memberships WHERE user_id = ? AND workspace_id = ?').run(id, session.workspace_id);
+    S('DELETE FROM sessions WHERE user_id = ? AND workspace_id = ?').run(id, session.workspace_id);
+    if (!S('SELECT 1 FROM memberships WHERE user_id = ?').get(id)) S('DELETE FROM users WHERE id = ?').run(id);
   });
   send(res, 200, { ok: true });
+}, { manage: true });
+
+// Casamentos de que a pessoa participa (assessoras costumam ter vários)
+route('GET', '/api/workspaces', ({ res, session }) => {
+  const rows = S(`SELECT w.id, w.name, w.settings, w.plan, w.trial_ends_at, w.paid_until, m.role
+                  FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
+                  WHERE m.user_id = ?`).all(session.user_id);
+  send(res, 200, rows.map((w) => {
+    const s = JSON.parse(w.settings);
+    return { id: w.id, name: w.name, role: w.role, date: s.date || '', place: s.receptionPlace || s.ceremonyPlace || '', access: workspaceAccess(w), current: w.id === session.workspace_id };
+  }).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999')));
+});
+
+route('POST', '/api/workspaces/switch', async ({ req, res, session }) => {
+  const id = String((await readJson(req)).id || '');
+  if (!S('SELECT 1 FROM memberships WHERE user_id = ? AND workspace_id = ?').get(session.user_id, id)) {
+    throw new HttpError(404, 'Casamento não encontrado.');
+  }
+  S('UPDATE sessions SET workspace_id = ? WHERE token_hash = ?').run(id, session.tokenHash);
+  S('UPDATE users SET last_workspace_id = ? WHERE id = ?').run(id, session.user_id);
+  send(res, 200, { ok: true });
+});
+
+// Quem não é dono(a) pode sair de um casamento (ex.: a assessoria ao fim do contrato).
+route('POST', '/api/workspaces/leave', ({ req, res, session }) => {
+  if (session.role === 'owner') throw new HttpError(400, 'Quem criou o casamento não pode sair dele; é possível excluir a conta.');
+  const uid = session.user_id;
+  let next = null;
+  tx(() => {
+    S('DELETE FROM memberships WHERE user_id = ? AND workspace_id = ?').run(uid, session.workspace_id);
+    S('DELETE FROM sessions WHERE user_id = ? AND workspace_id = ?').run(uid, session.workspace_id);
+    next = defaultWorkspace(uid);
+    if (!next) S('DELETE FROM users WHERE id = ?').run(uid);
+  });
+  if (next) {
+    createSession(req, res, uid, !!session.persistent, next);
+    return send(res, 200, { ok: true, switched: true });
+  }
+  send(res, 200, { ok: true, accountDeleted: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
 });
 
 route('GET', '/api/sessions', ({ res, session }) => {
@@ -479,81 +651,89 @@ route('POST', '/api/sessions/revoke-others', ({ res, session }) => {
   send(res, 200, { ok: true, removed: Number(r.changes) });
 });
 
-route('GET', '/api/data', ({ res }) => {
-  const items = {};
-  for (const c of COLLECTIONS) items[c] = [];
-  for (const r of S('SELECT * FROM items ORDER BY created_at').all()) if (items[r.coll]) items[r.coll].push(rowToItem(r));
-  const files = S('SELECT * FROM files ORDER BY created_at DESC').all().map(fileToJson);
-  const users = S('SELECT id, name FROM users').all().map((u) => ({ id: u.id, name: u.name }));
-  send(res, 200, { settings: getSettings(), items, files, users });
+// Dados do casamento
+route('GET', '/api/data', ({ res, session }) => {
+  const ws = session.workspace_id;
+  const { items, files } = exportWorkspace(ws);
+  const users = S('SELECT u.id, u.name FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ?').all(ws)
+    .map((u) => ({ id: u.id, name: u.name }));
+  send(res, 200, { settings: getSettings(ws), items, files, users });
 });
 
-route('PUT', '/api/settings', async ({ req, res }) => {
-  const merged = { ...getSettings(), ...cleanData(await readJson(req)) };
-  setSettings(merged);
+route('PUT', '/api/settings', async ({ req, res, session }) => {
+  const merged = { ...getSettings(session.workspace_id), ...cleanData(await readJson(req)) };
+  S('UPDATE workspaces SET settings = ?, name = ? WHERE id = ?').run(JSON.stringify(merged), coupleName(merged), session.workspace_id);
   send(res, 200, merged);
-});
+}, { write: true });
 
 route('POST', '/api/items/:coll', async ({ req, res, params, session }) => {
   const coll = checkColl(params.coll);
-  send(res, 201, insertItem(coll, cleanData(await readJson(req)), session.user_id));
-});
+  send(res, 201, insertItem(session.workspace_id, coll, cleanData(await readJson(req)), session.user_id));
+}, { write: true });
 
 route('POST', '/api/items/:coll/bulk', async ({ req, res, params, session }) => {
   const coll = checkColl(params.coll);
   const b = await readJson(req);
   if (!Array.isArray(b.items) || b.items.length > 3000) throw new HttpError(400, 'Lista inválida.');
   const now = Date.now();
-  const created = tx(() => b.items.map((d, i) => insertItem(coll, cleanData(d), session.user_id, now + i)));
+  const created = tx(() => b.items.map((d, i) => insertItem(session.workspace_id, coll, cleanData(d), session.user_id, now + i)));
   send(res, 201, created);
-});
+}, { write: true });
 
 route('PUT', '/api/items/:coll/:id', async ({ req, res, params, session }) => {
   const coll = checkColl(params.coll);
   if (!isUuid(params.id)) throw new HttpError(400, 'ID inválido.');
-  const row = S('SELECT * FROM items WHERE id = ? AND coll = ?').get(params.id, coll);
+  const row = S('SELECT * FROM items WHERE id = ? AND coll = ? AND workspace_id = ?').get(params.id, coll, session.workspace_id);
   if (!row) throw new HttpError(404, 'Registro não encontrado (talvez tenha sido excluído).');
   const merged = { ...JSON.parse(row.data), ...cleanData(await readJson(req)) };
   const data = JSON.stringify(merged);
   if (data.length > 200_000) throw new HttpError(413, 'Registro muito grande.');
   const now = Date.now();
-  S('UPDATE items SET data = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(data, now, session.user_id, params.id);
+  S('UPDATE items SET data = ?, updated_at = ?, updated_by = ? WHERE id = ? AND workspace_id = ?').run(data, now, session.user_id, params.id, session.workspace_id);
   send(res, 200, rowToItem({ ...row, data, updated_at: now, updated_by: session.user_id }));
-});
+}, { write: true });
 
-route('DELETE', '/api/items/:coll/:id', ({ res, params }) => {
+route('DELETE', '/api/items/:coll/:id', ({ res, params, session }) => {
   const coll = checkColl(params.coll);
   if (!isUuid(params.id)) throw new HttpError(400, 'ID inválido.');
+  const ws = session.workspace_id;
   let cascaded = false;
   tx(() => {
-    S('DELETE FROM items WHERE id = ? AND coll = ?').run(params.id, coll);
+    const r = S('DELETE FROM items WHERE id = ? AND coll = ? AND workspace_id = ?').run(params.id, coll, ws);
+    if (!r.changes) return;
     if (coll === 'vendors') {
-      S(`DELETE FROM items WHERE coll = 'payments' AND json_extract(data, '$.vendorId') = ?`).run(params.id);
-      S('UPDATE files SET vendor_id = NULL WHERE vendor_id = ?').run(params.id);
+      S(`DELETE FROM items WHERE coll = 'payments' AND workspace_id = ? AND json_extract(data, '$.vendorId') = ?`).run(ws, params.id);
+      S('UPDATE files SET vendor_id = NULL WHERE vendor_id = ? AND workspace_id = ?').run(params.id, ws);
       cascaded = true;
     }
     if (coll === 'tables') {
-      S(`UPDATE items SET data = json_set(data, '$.tableId', NULL), updated_at = ? WHERE coll = 'guests' AND json_extract(data, '$.tableId') = ?`)
-        .run(Date.now(), params.id);
+      S(`UPDATE items SET data = json_set(data, '$.tableId', NULL), updated_at = ?
+         WHERE coll = 'guests' AND workspace_id = ? AND json_extract(data, '$.tableId') = ?`).run(Date.now(), ws, params.id);
       cascaded = true;
     }
   });
   send(res, 200, { ok: true, cascaded });
-});
+}, { write: true });
 
+// Arquivos
 route('POST', '/api/files', async ({ req, res, session }) => {
   res.setHeader('Connection', 'close');
+  const ws = session.workspace_id;
   let rawName;
   try { rawName = decodeURIComponent(String(req.headers['x-file-name'] || '')); }
   catch { throw new HttpError(400, 'Nome de arquivo inválido.'); }
   const name = sanitizeFileName(rawName);
   const ext = path.extname(name).slice(1).toLowerCase();
   if (!FILE_TYPES[ext]) throw new HttpError(415, 'Tipo de arquivo não permitido. Use PDF, imagens, Word, Excel ou texto.');
-  if (Number(req.headers['content-length'] || 0) > MAX_UPLOAD) throw new HttpError(413, `Arquivo maior que ${MAX_UPLOAD_MB} MB.`);
+  const declared = Number(req.headers['content-length'] || 0);
+  if (declared > MAX_UPLOAD) throw new HttpError(413, `Arquivo maior que ${MAX_UPLOAD_MB} MB.`);
+  const used = S('SELECT COALESCE(SUM(size), 0) AS n FROM files WHERE workspace_id = ?').get(ws).n;
+  const quotaMsg = `Espaço de armazenamento cheio (limite de ${QUOTA_MB >= 1024 ? `${QUOTA_MB / 1024} GB` : `${QUOTA_MB} MB`}). Exclua arquivos que não precisa mais.`;
+  if (used + declared > QUOTA) throw new HttpError(413, quotaMsg);
   const cat = String(req.headers['x-category'] || '');
   const category = FILE_CATEGORIES.has(cat) ? cat : 'outros';
   const vendorHeader = String(req.headers['x-vendor-id'] || '');
-  const vendorId = isUuid(vendorHeader) ? vendorHeader : null;
+  const vendorId = vendorInWorkspace(ws, vendorHeader) ? vendorHeader : null;
   let note = '';
   try { note = decodeURIComponent(String(req.headers['x-note'] || '')).slice(0, 500); } catch { /* ignora */ }
 
@@ -565,6 +745,7 @@ route('POST', '/api/files', async ({ req, res, session }) => {
       for await (const chunk of source) {
         size += chunk.length;
         if (size > MAX_UPLOAD) throw new HttpError(413, `Arquivo maior que ${MAX_UPLOAD_MB} MB.`);
+        if (used + size > QUOTA) throw new HttpError(413, quotaMsg);
         yield chunk;
       }
     }, fs.createWriteStream(tmp, { flags: 'wx' }));
@@ -575,14 +756,14 @@ route('POST', '/api/files', async ({ req, res, session }) => {
   if (size === 0) { fs.rmSync(tmp, { force: true }); throw new HttpError(400, 'Arquivo vazio.'); }
   fs.renameSync(tmp, path.join(UPLOAD_DIR, id));
   const now = Date.now();
-  S('INSERT INTO files (id, name, ext, size, category, vendor_id, note, created_at, uploaded_by) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run(id, name, ext, size, category, vendorId, note, now, session.user_id);
+  S('INSERT INTO files (id, workspace_id, name, ext, size, category, vendor_id, note, created_at, uploaded_by) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(id, ws, name, ext, size, category, vendorId, note, now, session.user_id);
   send(res, 201, fileToJson(S('SELECT * FROM files WHERE id = ?').get(id)));
-});
+}, { write: true });
 
-route('GET', '/api/files/:id', ({ res, params, url }) => {
+route('GET', '/api/files/:id', ({ res, params, url, session }) => {
   if (!isUuid(params.id)) throw new HttpError(400, 'ID inválido.');
-  const f = S('SELECT * FROM files WHERE id = ?').get(params.id);
+  const f = S('SELECT * FROM files WHERE id = ? AND workspace_id = ?').get(params.id, session.workspace_id);
   if (!f) throw new HttpError(404, 'Arquivo não encontrado.');
   const p = path.join(UPLOAD_DIR, f.id);
   let st;
@@ -599,9 +780,10 @@ route('GET', '/api/files/:id', ({ res, params, url }) => {
   fs.createReadStream(p).pipe(res);
 });
 
-route('PUT', '/api/files/:id', async ({ req, res, params }) => {
+route('PUT', '/api/files/:id', async ({ req, res, params, session }) => {
   if (!isUuid(params.id)) throw new HttpError(400, 'ID inválido.');
-  const f = S('SELECT * FROM files WHERE id = ?').get(params.id);
+  const ws = session.workspace_id;
+  const f = S('SELECT * FROM files WHERE id = ? AND workspace_id = ?').get(params.id, ws);
   if (!f) throw new HttpError(404, 'Arquivo não encontrado.');
   const b = await readJson(req);
   let name = f.name;
@@ -610,26 +792,25 @@ route('PUT', '/api/files/:id', async ({ req, res, params }) => {
     if (path.extname(name).slice(1).toLowerCase() !== f.ext) name = `${name}.${f.ext}`;
   }
   const category = FILE_CATEGORIES.has(b.category) ? b.category : f.category;
-  const vendorId = b.vendorId === undefined ? f.vendor_id : (isUuid(b.vendorId) ? b.vendorId : null);
+  const vendorId = b.vendorId === undefined ? f.vendor_id : (vendorInWorkspace(ws, b.vendorId) ? b.vendorId : null);
   const note = typeof b.note === 'string' ? b.note.slice(0, 500) : f.note;
-  S('UPDATE files SET name = ?, category = ?, vendor_id = ?, note = ? WHERE id = ?').run(name, category, vendorId, note, f.id);
+  S('UPDATE files SET name = ?, category = ?, vendor_id = ?, note = ? WHERE id = ? AND workspace_id = ?').run(name, category, vendorId, note, f.id, ws);
   send(res, 200, fileToJson(S('SELECT * FROM files WHERE id = ?').get(f.id)));
-});
+}, { write: true });
 
-route('DELETE', '/api/files/:id', ({ res, params }) => {
+// Excluir arquivo é permitido mesmo em modo só leitura (libera espaço / LGPD).
+route('DELETE', '/api/files/:id', ({ res, params, session }) => {
   if (!isUuid(params.id)) throw new HttpError(400, 'ID inválido.');
-  S('DELETE FROM files WHERE id = ?').run(params.id);
-  fs.rmSync(path.join(UPLOAD_DIR, params.id), { force: true });
+  const r = S('DELETE FROM files WHERE id = ? AND workspace_id = ?').run(params.id, session.workspace_id);
+  if (r.changes) fs.rmSync(path.join(UPLOAD_DIR, params.id), { force: true });
   send(res, 200, { ok: true });
 });
 
-route('GET', '/api/export', ({ res }) => {
-  const items = {};
-  for (const c of COLLECTIONS) items[c] = [];
-  for (const r of S('SELECT * FROM items ORDER BY created_at').all()) if (items[r.coll]) items[r.coll].push(rowToItem(r));
+route('GET', '/api/export', ({ res, session }) => {
+  const ws = session.workspace_id;
   const body = JSON.stringify({
-    app: 'planejador-casamento', version: 1, exportedAt: new Date().toISOString(),
-    settings: getSettings(), items, files: S('SELECT * FROM files').all().map(fileToJson),
+    app: 'planejador-casamento', version: 2, exportedAt: new Date().toISOString(),
+    settings: getSettings(ws), ...exportWorkspace(ws),
   }, null, 2);
   const stamp = new Date().toISOString().slice(0, 10);
   res.writeHead(200, {
@@ -639,6 +820,15 @@ route('GET', '/api/export', ({ res }) => {
   });
   res.end(body);
 });
+
+// Excluir a conta do casal (todos os dados e arquivos) — LGPD.
+route('DELETE', '/api/workspace', async ({ req, res, session }) => {
+  const b = await readJson(req);
+  const user = S('SELECT pass_hash FROM users WHERE id = ?').get(session.user_id);
+  if (!(await verifyPassword(String(b.password || ''), user.pass_hash))) throw new HttpError(400, 'Senha incorreta.');
+  deleteWorkspace(session.workspace_id);
+  send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
+}, { owner: true });
 
 // ---------------------------------------------------------------------------
 // Servidor HTTP
@@ -685,6 +875,13 @@ async function handleApi(req, res, url) {
     if (mutating && !safeEqual(String(req.headers['x-csrf-token'] || ''), session.csrf)) {
       throw new HttpError(403, 'Token de segurança inválido. Recarregue a página.');
     }
+    if (r.owner && session.role !== 'owner') throw new HttpError(403, 'Só quem criou o casamento no planejador pode fazer isso.');
+    if (r.manage && !MANAGER_ROLES.has(session.role)) throw new HttpError(403, 'Só os noivos podem gerenciar quem tem acesso.');
+    if (r.write && session.access !== 'full') {
+      throw new HttpError(402, session.plan === 'trial'
+        ? 'Seu período de teste terminou. Assine para continuar editando — seus dados continuam disponíveis para consulta e download.'
+        : 'Sua assinatura não está ativa. Os dados continuam disponíveis para consulta e download.');
+    }
   }
   await r.handler({ req, res, url, params, session });
 }
@@ -725,7 +922,8 @@ const server = http.createServer(async (req, res) => {
 setInterval(() => {
   const now = Date.now();
   S('DELETE FROM sessions WHERE expires_at <= ?').run(now);
-  for (const [ip, a] of attempts) if (a.reset < now) attempts.delete(ip);
+  S('DELETE FROM password_resets WHERE expires_at <= ?').run(now);
+  for (const [k, a] of attempts) if (a.reset < now) attempts.delete(k);
   for (const f of fs.readdirSync(TMP_DIR)) {
     const p = path.join(TMP_DIR, f);
     try { if (now - fs.statSync(p).mtimeMs > DAY) fs.rmSync(p, { force: true }); } catch { /* ignora */ }
@@ -741,8 +939,11 @@ ensureSetupCode();
 server.listen(PORT, HOST, () => {
   console.log('\n  Planejador de Casamento rodando!\n');
   console.log(`  Neste computador:   http://localhost:${PORT}`);
-  if (HOST === '0.0.0.0') for (const ip of lanAddresses()) console.log(`  Celular / tablet:   http://${ip}:${PORT}  (mesma rede Wi-Fi)`);
+  if (HOST === '0.0.0.0' && !TRUST_PROXY) for (const ip of lanAddresses()) console.log(`  Celular / tablet:   http://${ip}:${PORT}  (mesma rede Wi-Fi)`);
   console.log(`  Dados salvos em:    ${DATA_DIR}`);
+  console.log(`  Cadastro público:   ${SIGNUP_OPEN ? `ABERTO (teste grátis de ${TRIAL_DAYS} dias)` : 'fechado'}`);
+  if (SIGNUP_OPEN && !APP_URL) console.log('  ATENÇÃO: defina APP_URL (ex.: https://seudominio.com.br) para os links enviados por e-mail.');
+  if (!process.env.RESEND_API_KEY) console.log('  E-mails:            não configurado (links de senha aparecem só neste log)');
   if (setupCode) {
     console.log('\n  ==============================================');
     console.log(`   PRIMEIRO ACESSO - codigo de configuracao: ${setupCode}`);

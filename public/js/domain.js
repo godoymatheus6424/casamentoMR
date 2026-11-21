@@ -48,6 +48,20 @@ export const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
 
 export const PAYMENT_METHODS = ['', 'PIX', 'Boleto', 'Cartão de crédito', 'Transferência', 'Dinheiro', 'Cheque'];
 
+// Tipos de acesso ao casamento
+export const ROLE_LABELS = {
+  owner: 'Noivo(a)',
+  couple: 'Noivo(a)',
+  planner: 'Assessoria',
+  member: 'Família / amigo',
+};
+export const ROLE_OPTIONS = [
+  { value: 'couple', label: 'Noivo(a): meu par' },
+  { value: 'planner', label: 'Assessoria / cerimonial' },
+  { value: 'member', label: 'Família ou amigo(a)' },
+];
+export const isManager = (role) => role === 'owner' || role === 'couple';
+
 export function names() {
   const s = state.settings;
   return { p1: s.partner1?.trim() || 'Noivo(a) 1', p2: s.partner2?.trim() || 'Noivo(a) 2' };
