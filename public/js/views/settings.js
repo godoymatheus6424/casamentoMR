@@ -163,7 +163,7 @@ function planCard() {
   else if (ws.access === 'readonly') statusLine = html`<span class="badge b-danger">Só leitura</span> ${ws.plan === 'trial' ? `O teste terminou em ${fmtDay(ws.trialEndsAt)}.` : 'Assinatura inativa.'}`;
   else if (ws.plan === 'trial') statusLine = html`<span class="badge b-accent">Teste grátis</span> Tudo liberado até ${fmtDay(ws.trialEndsAt)}.`;
   else statusLine = html`<span class="badge b-ok">${ws.planLabel}</span> ${ws.paidUntil ? `Ativo até ${fmtDay(ws.paidUntil)}.` : 'Ativo.'}`;
-  return html`<section class="card">
+  return html`<section class="card o-4">
     <header class="card-head"><h2>${icon('money')} Plano e armazenamento</h2></header>
     <div class="pad plan-status">${statusLine}</div>
     ${ws.plan !== 'lifetime' ? html`<div class="pad plans">
@@ -188,13 +188,33 @@ export default {
     return html`
       ${pageHead('Configurações')}
       <div class="settings-grid">
-        <section class="card">
+       <div class="settings-col">
+        <section class="card o-1">
           <header class="card-head"><h2>${icon('heart')} Casamento</h2></header>
           <p class="pad muted">Nomes, data, locais, orçamento total, estilo e paleta de cores.</p>
           <div class="pad"><button type="button" class="btn btn-primary" data-act="wedding">${icon('edit')}<span>Editar detalhes do casamento</span></button></div>
         </section>
 
-        <section class="card">
+        ${manager ? planCard() : ''}
+
+        <section class="card o-5">
+          <header class="card-head"><h2>${icon('sparkle')} Aparência</h2></header>
+          <div class="pad field"><label for="theme-sel">Tema</label><select id="theme-sel">${selectOptions([{ value: 'auto', label: 'Automático (segue o aparelho)' }, { value: 'light', label: 'Claro' }, { value: 'dark', label: 'Escuro' }], theme)}</select></div>
+        </section>
+
+        <section class="card o-7">
+          <header class="card-head"><h2>${icon('shield')} Segurança</h2></header>
+          <ul class="pad sec-list">
+            <li>Senhas guardadas com criptografia forte (scrypt).</li>
+            <li>Cada casamento fica totalmente isolado dos outros.</li>
+            <li>Bloqueio automático após várias tentativas de senha erradas.</li>
+            <li>Arquivos só podem ser abertos por quem tem acesso a este casamento.</li>
+          </ul>
+        </section>
+       </div>
+
+       <div class="settings-col">
+        <section class="card o-2">
           <header class="card-head"><h2>${icon('user')} Minha conta</h2></header>
           <div class="list">
             <div class="row clickable" data-act="account"><div class="row-main"><div class="row-title">${state.user.name}</div><div class="row-meta"><span>${state.user.email || html`<span class="text-warn">sem e-mail: adicione para poder recuperar a senha</span>`}</span></div></div>${icon('edit')}</div>
@@ -203,9 +223,7 @@ export default {
           </div>
         </section>
 
-        ${manager ? planCard() : ''}
-
-        <section class="card">
+        <section class="card o-3">
           <header class="card-head"><h2>${icon('users')} Quem tem acesso</h2>${manager ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="adduser">${icon('plus')}<span>Pessoa</span></button>` : ''}</header>
           ${users == null ? html`<p class="pad muted">Carregando…</p>` : html`<div class="list">${users.map((u) => {
             const editable = manager && !u.isMe && u.role !== 'owner';
@@ -222,36 +240,22 @@ export default {
           </div>` : ''}
         </section>
 
-        <section class="card">
-          <header class="card-head"><h2>${icon('sparkle')} Aparência</h2></header>
-          <div class="pad field"><label for="theme-sel">Tema</label><select id="theme-sel">${selectOptions([{ value: 'auto', label: 'Automático (segue o aparelho)' }, { value: 'light', label: 'Claro' }, { value: 'dark', label: 'Escuro' }], theme)}</select></div>
-        </section>
-
-        <section class="card">
+        <section class="card o-6">
           <header class="card-head"><h2>${icon('download')} Seus dados</h2></header>
           <p class="pad muted">Baixe uma cópia de todo o planejamento (sem os arquivos, que você pode baixar um a um em Documentos).</p>
           <div class="pad"><a class="btn btn-ghost" href="/api/export" download>${icon('download')}<span>Baixar meus dados (JSON)</span></a></div>
         </section>
 
-        <section class="card">
-          <header class="card-head"><h2>${icon('shield')} Segurança</h2></header>
-          <ul class="pad sec-list">
-            <li>Senhas guardadas com criptografia forte (scrypt).</li>
-            <li>Cada casamento fica totalmente isolado dos outros.</li>
-            <li>Bloqueio automático após várias tentativas de senha erradas.</li>
-            <li>Arquivos só podem ser abertos por quem tem acesso a este casamento.</li>
-          </ul>
-        </section>
-
-        ${owner ? html`<section class="card danger-zone">
+        ${owner ? html`<section class="card danger-zone o-8">
           <header class="card-head"><h2>${icon('trash')} Excluir conta</h2></header>
           <p class="pad muted">Apaga definitivamente este planejamento, os arquivos e os acessos das pessoas convidadas.</p>
           <div class="pad"><button type="button" class="btn btn-danger-ghost" data-act="delaccount">${icon('trash')}<span>Excluir conta e todos os dados</span></button></div>
-        </section>` : html`<section class="card">
+        </section>` : html`<section class="card o-8">
           <header class="card-head"><h2>${icon('logout')} Sair deste casamento</h2></header>
           <p class="pad muted">Remove o seu acesso a "${state.workspace?.name || 'este casamento'}". O planejamento continua com os noivos.</p>
           <div class="pad"><button type="button" class="btn btn-danger-ghost" data-act="leave">${icon('logout')}<span>Sair deste casamento</span></button></div>
         </section>`}
+       </div>
       </div>`;
   },
   mount(el) {
