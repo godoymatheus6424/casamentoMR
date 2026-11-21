@@ -1,4 +1,4 @@
-// Planejador de Casamento — servidor sem dependências externas (Node.js 22.13+).
+// BRIDEx (planejador de casamento) — servidor sem dependências externas (Node.js 22.13+).
 // Vários casais no mesmo servidor: cada casal tem um "espaço" (workspace) isolado.
 // Banco: SQLite embutido (node:sqlite). Senhas: scrypt. Sessões: cookie HttpOnly + token CSRF.
 
@@ -63,7 +63,8 @@ const FILE_TYPES = {
 const INLINE_TYPES = new Set(['pdf', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'txt']);
 const STATIC_MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
+  '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2',
   '.webmanifest': 'application/manifest+json',
 };
 
@@ -461,13 +462,13 @@ route('POST', '/api/password/forgot', async ({ req, res }) => {
     const link = `${appUrl(req)}/#/redefinir?token=${token}`;
     const mail = emailLayout({
       title: 'Redefinir sua senha',
-      intro: `Olá, ${user.name}! Recebemos um pedido para redefinir a senha do seu planejador de casamento. O link vale por 1 hora.`,
+      intro: `Olá, ${user.name}! Recebemos um pedido para redefinir a sua senha do BRIDEx. O link vale por 1 hora.`,
       buttonText: 'Criar nova senha',
       buttonUrl: link,
       outro: 'Se não foi você, ignore este e-mail: sua senha continua a mesma.',
     });
     // Envio em segundo plano: a resposta leva o mesmo tempo existindo ou não a conta.
-    sendMail({ to: user.email, subject: 'Redefinição de senha', ...mail });
+    sendMail({ to: user.email, subject: 'Redefinição de senha · BRIDEx', ...mail });
   }
   await sleep(300 + crypto.randomInt(300));
   send(res, 200, { ok: true });
@@ -937,7 +938,7 @@ function lanAddresses() {
 
 ensureSetupCode();
 server.listen(PORT, HOST, () => {
-  console.log('\n  Planejador de Casamento rodando!\n');
+  console.log('\n  BRIDEx rodando!\n');
   console.log(`  Neste computador:   http://localhost:${PORT}`);
   if (HOST === '0.0.0.0' && !TRUST_PROXY) for (const ip of lanAddresses()) console.log(`  Celular / tablet:   http://${ip}:${PORT}  (mesma rede Wi-Fi)`);
   console.log(`  Dados salvos em:    ${DATA_DIR}`);

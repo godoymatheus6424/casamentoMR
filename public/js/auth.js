@@ -3,13 +3,16 @@
 import { api } from './api.js';
 import { state } from './store.js';
 import { html, icon } from './ui.js';
+import { renderLanding, BRAND } from './landing.js';
 
 const app = document.getElementById('app');
 let onLoggedIn = async () => {};
 export function setLoggedInHandler(fn) { onLoggedIn = fn; }
 
 function authScreen(inner, { wide = false } = {}) {
+  window.scrollTo(0, 0);
   app.innerHTML = String(html`<div class="auth">
+    <a href="#/" class="auth-back">${icon('chevron', 'flip')}<span>${BRAND}</span></a>
     <div class="auth-card ${wide ? 'wide' : ''}">
       <div class="auth-mark">${icon('heart')}</div>
       ${inner}
@@ -49,6 +52,8 @@ export function renderAuth(msg = '') {
   if (route === 'cadastro' && state.status.signupOpen) return renderSignup();
   if (route === 'esqueci') return renderForgot();
   if (route === 'redefinir') return renderReset(new URLSearchParams(hash.split('?')[1] || '').get('token') || '');
+  // Endereço principal sem sessão: página de apresentação. Qualquer outro (#/entrar, páginas do app): login.
+  if (!route && !msg) return renderLanding();
   return renderLogin(msg);
 }
 
@@ -97,7 +102,7 @@ function renderSignup() {
       <p class="form-error" role="alert"></p>
       <button class="btn btn-primary btn-block" type="submit">Começar meu teste grátis</button>
     </form>
-    <p class="auth-switch">Já tem conta? <a href="#/" class="link">Entrar</a></p>`, { wide: true });
+    <p class="auth-switch">Já tem conta? <a href="#/entrar" class="link">Entrar</a></p>`, { wide: true });
   const f = app.querySelector('#signup');
   bindForm(f, async () => {
     if (f.password.value !== f.password2.value) throw new Error('As senhas não conferem.');
@@ -149,7 +154,7 @@ function renderForgot() {
       <p class="form-error" role="alert"></p>
       <button class="btn btn-primary btn-block" type="submit">Enviar link</button>
     </form>
-    <p class="auth-switch"><a href="#/" class="link">Voltar para o login</a></p>`);
+    <p class="auth-switch"><a href="#/entrar" class="link">Voltar para o login</a></p>`);
   const f = app.querySelector('#forgot');
   bindForm(f, async () => {
     const email = f.email.value.trim();
@@ -158,7 +163,7 @@ function renderForgot() {
     authScreen(html`<h1>Confira seu e-mail</h1>
       <p class="muted center">Se existir uma conta com <strong>${email}</strong>, enviamos um link para criar uma nova senha. Ele vale por 1 hora.</p>
       <p class="muted center small">Não chegou? Veja a caixa de spam ou tente de novo em alguns minutos.</p>
-      <a href="#/" class="btn btn-ghost btn-block">Voltar para o login</a>`);
+      <a href="#/entrar" class="btn btn-ghost btn-block">Voltar para o login</a>`);
   });
 }
 
@@ -176,7 +181,7 @@ function renderReset(token) {
   bindForm(f, async () => {
     if (f.password.value !== f.password2.value) throw new Error('As senhas não conferem.');
     await api('POST', '/api/password/reset', { token, password: f.password.value });
-    history.replaceState(null, '', '#/');
+    history.replaceState(null, '', '#/entrar');
     renderLogin();
     const ok = app.querySelector('.form-error');
     ok.textContent = 'Senha alterada! Entre com a nova senha.';

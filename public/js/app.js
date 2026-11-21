@@ -57,6 +57,8 @@ async function startSession(me) {
   state.workspace = me.workspace;
   state.workspaceCount = me.workspaceCount || 1;
   setCsrf(me.csrf);
+  // Vindo da página inicial ou das telas de acesso, abre a Visão geral.
+  if (/^#?\/?(entrar|cadastro|esqueci|redefinir)?(\?.*)?$/.test(location.hash)) history.replaceState(null, '', '#/inicio');
   await loadAll();
   renderShell();
 }

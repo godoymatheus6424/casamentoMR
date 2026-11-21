@@ -1,4 +1,6 @@
-# Planejador de Casamento 💍
+# BRIDEx 💍
+
+Planejador de casamento para noivos e assessoras.
 
 Um site privado para organizar o casamento no lugar das planilhas de Excel. Funciona no computador, no tablet e no celular, e o casal pode usar ao mesmo tempo.
 

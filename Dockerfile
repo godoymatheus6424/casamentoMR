@@ -1,4 +1,4 @@
-# Planejador de Casamento — imagem para Easypanel / Docker
+# BRIDEx — imagem para Easypanel / Docker
 FROM node:24-alpine
 
 # su-exec: inicia como root só para ajustar a permissão do volume, depois roda como usuário comum

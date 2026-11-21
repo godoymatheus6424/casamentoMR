@@ -1,5 +1,5 @@
 /* =========================================================================
-   Planejador de Casamento — estilos
+   BRIDEx — estilos
    Mobile first · tablet (≥768px) · desktop (≥1100px)
    ========================================================================= */
 
@@ -726,6 +726,147 @@ button.link-more { border: 0; background: none; padding: 4px 0; cursor: pointer;
   .tl-item::before { left: 51px; }
   .tl-item time { font-size: 13px; }
 }
+
+/* ---------- Página inicial (antes do login) ---------- */
+/* Cormorant Garamond (SIL Open Font License), servida pelo próprio site. Fonte variável: um arquivo, todos os pesos. */
+@font-face { font-family: "LP Display"; font-style: normal; font-weight: 300 700; font-display: swap; src: url("/fonts/cormorant-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "LP Display"; font-style: normal; font-weight: 300 700; font-display: swap; src: url("/fonts/cormorant-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "LP Display"; font-style: italic; font-weight: 300 700; font-display: swap; src: url("/fonts/cormorant-italic-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "LP Display"; font-style: italic; font-weight: 300 700; font-display: swap; src: url("/fonts/cormorant-italic-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+
+.landing {
+  --lp-green: #1d2620; --lp-green-2: #26332a; --lp-cream: #f3ead8; --lp-cream-2: #e9dcc3;
+  --lp-display: "LP Display", "Cormorant Garamond", "Palatino Linotype", Georgia, serif;
+  --lace-h: clamp(64px, 8.5vw, 116px);
+  background: var(--bg); color: var(--ink); overflow-x: clip;
+}
+.landing .btn-lg { min-height: 50px; padding: 0 26px; font-size: 15px; }
+.monogram { width: 64px; height: 34px; color: currentColor; }
+.ic.flip { transform: rotate(180deg); }
+
+.lp-nav {
+  position: fixed; inset: 0 0 auto 0; z-index: 50; display: flex; align-items: center; gap: 16px;
+  padding: 14px 20px; padding-top: max(14px, env(safe-area-inset-top)); color: var(--lp-cream);
+  transition: background .3s, box-shadow .3s, color .3s, padding .3s;
+}
+.lp-nav.solid { background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); color: var(--ink); box-shadow: 0 1px 0 var(--line); padding-block: 10px; }
+.lp-brand { display: flex; align-items: center; gap: 10px; font-family: var(--lp-display); font-size: 25px; font-weight: 500; letter-spacing: .12em; white-space: nowrap; }
+.lp-wordmark { font-family: var(--lp-display); font-weight: 400; font-size: clamp(30px, 4.4vw, 44px); letter-spacing: .2em; line-height: 1; margin: -4px 0 -6px .2em; }
+.lp-brand .monogram { width: 44px; height: 24px; }
+.lp-links { display: none; gap: 26px; margin-left: auto; font-size: 14px; font-weight: 500; }
+.lp-links a { opacity: .85; } .lp-links a:hover { opacity: 1; text-decoration: underline; text-underline-offset: 4px; }
+.lp-actions { display: flex; gap: 8px; margin-left: auto; }
+.lp-nav:not(.solid) .lp-login { color: var(--lp-cream); border-color: color-mix(in srgb, var(--lp-cream) 45%, transparent); }
+.lp-nav:not(.solid) .lp-login:hover { background: rgba(255,255,255,.1); }
+@media (min-width: 900px) { .lp-links { display: flex; } .lp-actions { margin-left: 18px; } .lp-nav { padding-inline: 40px; } }
+@media (max-width: 420px) { .lp-brand { font-size: 21px; letter-spacing: .08em; } .lp-brand .monogram { display: none; } }
+
+.lp-hero { position: relative; min-height: 100svh; display: grid; place-items: center; padding: 110px 20px calc(var(--lace-h) + 56px); color: var(--lp-cream); background: var(--lp-green); isolation: isolate; }
+.lp-hero-bg {
+  position: absolute; inset: 0; z-index: -1;
+  background:
+    linear-gradient(180deg, rgba(14,20,16,.55) 0%, rgba(14,20,16,.25) 35%, rgba(14,20,16,.45) 70%, rgba(14,20,16,.92) 100%),
+    url("/img/hero-fundo.jpg") center 35% / cover no-repeat,
+    radial-gradient(ellipse at 30% 20%, #3c5a43, transparent 60%), radial-gradient(ellipse at 80% 70%, #2b4232, transparent 55%), var(--lp-green);
+  animation: lpZoom 24s ease-out both;
+}
+@keyframes lpZoom { from { transform: scale(1.06); } to { transform: scale(1); } }
+.lp-hero-content { max-width: 860px; text-align: center; display: grid; justify-items: center; gap: 18px; animation: fadeUp .9s .15s both; }
+.lp-hero-content .monogram { width: 92px; height: 50px; opacity: .95; }
+.lp-eyebrow { font-size: 12.5px; letter-spacing: .32em; text-transform: uppercase; opacity: .85; }
+.lp-hero h1 { font-family: var(--lp-display); font-weight: 400; font-size: clamp(44px, 8vw, 96px); line-height: 1; letter-spacing: .005em; text-wrap: balance; text-shadow: 0 2px 30px rgba(0,0,0,.35); }
+.lp-hero h1 em { font-style: italic; font-weight: 400; }
+@media (min-width: 700px) { .lp-hero h1 .l1 { white-space: nowrap; } .lp-hero h1 em { display: block; } }
+.lp-lead { max-width: 640px; font-size: clamp(15.5px, 2.1vw, 18px); line-height: 1.6; opacity: .92; }
+.lp-cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 6px; }
+.lp-ghost-light { color: var(--lp-cream); border-color: color-mix(in srgb, var(--lp-cream) 55%, transparent); }
+.lp-ghost-light:hover { background: rgba(255,255,255,.1); }
+.lp-note { font-size: 13px; opacity: .75; }
+
+/* Renda bordada (imagem com fundo transparente, repetida na horizontal) */
+/* Fica exatamente na emenda entre duas seções, como um acabamento de renda costurado na borda */
+.lp-lace {
+  position: absolute; left: 0; right: 0; bottom: calc(var(--lace-h) / -2); height: var(--lace-h); z-index: 2; pointer-events: none;
+  background: url("/img/renda.png") center / auto 100% repeat-x;
+  filter: drop-shadow(0 3px 6px rgba(0,0,0,.22));
+}
+.lp-lace.top { top: calc(var(--lace-h) / -2); bottom: auto; }
+
+.lp-section { padding: 84px 20px; }
+#recursos { padding-top: calc(var(--lace-h) / 2 + 72px); }
+.lp-alt { background: var(--surface-2); }
+.lp-head { max-width: 720px; margin: 0 auto 44px; text-align: center; display: grid; gap: 12px; }
+.lp-head.left { text-align: left; margin: 0; }
+.lp-kicker { font-size: 12px; font-weight: 700; letter-spacing: .24em; text-transform: uppercase; color: var(--accent); }
+.lp-head h2, .lp-final h2 { font-family: var(--lp-display); font-weight: 400; font-size: clamp(30px, 4.6vw, 50px); line-height: 1.1; }
+.lp-head p:not(.lp-kicker) { color: var(--muted); font-size: 16.5px; line-height: 1.65; }
+
+.lp-features { max-width: 1120px; margin: 0 auto; display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+.lp-feature { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 24px; display: grid; gap: 10px; align-content: start; transition: transform .2s, box-shadow .2s; }
+.lp-feature:hover { transform: translateY(-3px); box-shadow: var(--shadow); }
+.lp-feature h3 { font-size: 17px; }
+.lp-feature p { color: var(--muted); font-size: 14.5px; line-height: 1.6; }
+.lp-ic { width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+
+.lp-split { max-width: 1080px; margin: 0 auto; display: grid; gap: 36px; align-items: center; }
+@media (min-width: 900px) { .lp-split { grid-template-columns: 1fr 1fr; gap: 64px; } .lp-split.reverse > :first-child { order: 2; } }
+.lp-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.lp-checks li { display: flex; gap: 14px; align-items: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; font-size: 15px; line-height: 1.5; }
+.lp-checks .ic { flex: none; width: 22px; height: 22px; color: var(--ok); margin-top: 1px; }
+.lp-mock { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 20px; box-shadow: var(--shadow); display: grid; gap: 10px; max-width: 440px; justify-self: center; width: 100%; }
+.lp-mock-title { font-family: var(--serif); font-size: 22px; font-weight: 600; margin-bottom: 4px; }
+.lp-mock-item { display: flex; align-items: center; gap: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; }
+.lp-mock-item strong { font-family: var(--serif); font-size: 28px; color: var(--accent); min-width: 50px; text-align: center; }
+.lp-mock-item span { display: grid; } .lp-mock-item small { color: var(--muted); }
+
+.lp-trust { max-width: 1080px; margin: 0 auto; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+.lp-trust > div { text-align: center; padding: 28px 22px; display: grid; justify-items: center; gap: 10px; }
+.lp-trust .ic { width: 34px; height: 34px; color: var(--accent); }
+.lp-trust h3 { font-size: 18px; } .lp-trust p { color: var(--muted); font-size: 14.5px; line-height: 1.6; }
+
+.lp-prices { max-width: 720px; margin: 0 auto 32px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+.lp-price { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 28px; display: grid; gap: 8px; text-align: center; justify-items: center; }
+.lp-price.best { border: 2px solid var(--accent); box-shadow: var(--shadow); }
+.lp-price .badge { position: absolute; top: -12px; }
+.lp-price h3 { font-size: 15px; text-transform: uppercase; letter-spacing: .16em; color: var(--muted); }
+.lp-amount { font-family: var(--lp-display); font-size: 46px; line-height: 1.1; }
+.lp-amount small { font-family: var(--sans); font-size: 15px; color: var(--muted); }
+.lp-price p:last-child { color: var(--muted); font-size: 14.5px; }
+.lp-center { text-align: center; }
+
+.lp-faq { max-width: 760px; margin: 0 auto; display: grid; gap: 10px; }
+.lp-faq details { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 0 20px; }
+.lp-faq summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 0; font-weight: 600; font-size: 15.5px; }
+.lp-faq summary::-webkit-details-marker { display: none; }
+.lp-faq summary .ic { flex: none; color: var(--accent); transition: transform .2s; }
+.lp-faq details[open] summary .ic { transform: rotate(45deg); }
+.lp-faq details p { color: var(--muted); line-height: 1.65; padding-bottom: 18px; }
+
+.lp-final {
+  position: relative; isolation: isolate; color: var(--lp-cream); padding: calc(var(--lace-h) + 72px) 20px 96px; text-align: center;
+  background: linear-gradient(180deg, rgba(14,20,16,.82), rgba(14,20,16,.9)), url("/img/hero-fundo.jpg") center 70% / cover no-repeat, var(--lp-green);
+}
+.lp-final h2 { text-wrap: balance; }
+.lp-final-content { display: grid; justify-items: center; gap: 18px; position: relative; z-index: 2; }
+.lp-final .monogram { width: 80px; height: 44px; }
+.lp-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 24px; padding: 24px 20px calc(24px + env(safe-area-inset-bottom)); background: #151c17; color: color-mix(in srgb, var(--lp-cream) 70%, transparent); font-size: 13.5px; }
+.lp-footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
+.lp-footer a:hover { color: var(--lp-cream); }
+@media (min-width: 900px) { .lp-footer { padding-inline: 40px; } .lp-section { padding: 110px 40px; } }
+
+.reveal { opacity: 0; transform: translateY(14px); transition: opacity .7s ease, transform .7s ease; }
+.reveal.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .lp-hero-bg, .lp-hero-content { animation: none; } .reveal { opacity: 1; transform: none; transition: none; } }
+
+/* Link de volta nas telas de acesso */
+.auth { position: relative; padding-top: 72px; }
+.auth-back { position: absolute; top: max(16px, env(safe-area-inset-top)); left: 16px; display: inline-flex; align-items: center; gap: 4px; padding: 8px 12px 8px 6px; border-radius: 999px; color: var(--muted); font-size: 13.5px; font-weight: 600; }
+.auth-back:hover { background: var(--surface); color: var(--accent); }
+.auth-back .ic { width: 18px; height: 18px; }
 
 /* ---------- Páginas legais ---------- */
 .legal { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; display: grid; gap: 12px; }

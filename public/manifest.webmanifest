@@ -1,7 +1,7 @@
 {
-  "name": "Nosso Casamento",
-  "short_name": "Casamento",
-  "description": "Planejamento do casamento",
+  "name": "BRIDEx · Planejamento de casamento",
+  "short_name": "BRIDEx",
+  "description": "Planejador de casamento para noivos e assessoras",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f8f5f0",
