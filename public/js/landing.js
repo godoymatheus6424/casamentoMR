@@ -81,7 +81,7 @@ export function renderLanding() {
       </div>
     </section>
 
-    <section class="lp-section lp-ivory">
+    <section class="lp-section lp-rule">
       <div class="lp-split">
         <div class="lp-head left reveal">
           <p class="lp-kicker">Adeus, planilha</p>
@@ -126,7 +126,7 @@ export function renderLanding() {
       </div>
     </section>
 
-    <section class="lp-section lp-ivory" id="precos">
+    <section class="lp-section lp-dark" id="precos">
       <div class="lp-head reveal">
         <p class="lp-kicker">Planos</p>
         <h2>Simples, <em>como deve ser</em></h2>
@@ -136,7 +136,7 @@ export function renderLanding() {
         <div class="lp-price reveal"><h3>Mensal</h3><p class="lp-amount"><small>R$</small>${price.monthly}</p><p class="lp-per">por mês</p><p>Para quem já está na reta final.</p></div>
         <div class="lp-price best reveal"><p class="lp-tag">Recomendado</p><h3>Anual</h3><p class="lp-amount"><small>R$</small>${price.annual}</p><p class="lp-per">por ano</p><p>Equivale a R$ ${annualMonthly} por mês, para planejar com calma.</p></div>
       </div>
-      <div class="lp-center reveal">${cta('dark')}</div>
+      <div class="lp-center reveal">${cta('light')}</div>
     </section>
 
     <section class="lp-section" id="duvidas">
