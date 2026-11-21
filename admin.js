@@ -27,7 +27,7 @@ const [cmd, ref, arg] = process.argv.slice(2);
 
 if (cmd === 'espacos') {
   const rows = db.prepare(`
-    SELECT w.*, (SELECT u.email FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = w.id AND m.role = 'owner' LIMIT 1) AS owner,
+    SELECT w.*, (SELECT COALESCE(u.email, u.username) FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = w.id AND m.role = 'owner' LIMIT 1) AS owner,
            (SELECT COUNT(*) FROM memberships m WHERE m.workspace_id = w.id) AS members,
            (SELECT COALESCE(SUM(size), 0) FROM files f WHERE f.workspace_id = w.id) AS bytes
     FROM workspaces w ORDER BY w.created_at DESC`).all();
