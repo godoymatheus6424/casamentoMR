@@ -387,7 +387,12 @@ button.link-more { border: 0; background: none; padding: 4px 0; cursor: pointer;
 .tick:checked { background: var(--ok); border-color: var(--ok); }
 .tick:checked::after { content: ""; width: 6px; height: 11px; border: solid #fff; border-width: 0 2.5px 2.5px 0; transform: translateY(-1px) rotate(45deg); }
 
-.badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; flex: none; }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+
+/* Cards em grade: o conteúdo pode encolher em vez de empurrar o card para fora */
+.table-card, .stat, .kpi, .note, .tl-body, .plan-opt { grid-template-columns: minmax(0, 1fr); }
+.row-meta span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.tag-btn, .link-chip, .swatch { max-width: 100%; overflow-wrap: anywhere; }
 .b-ok { background: var(--ok-soft); color: var(--ok); }
 .b-warn { background: var(--warn-soft); color: var(--warn); }
 .b-danger { background: var(--danger-soft); color: var(--danger); }
@@ -532,15 +537,17 @@ button.link-more { border: 0; background: none; padding: 4px 0; cursor: pointer;
 
 /* ---------- Fornecedores ---------- */
 .vendor-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
-.vendor-card { padding: 16px; display: grid; gap: 6px; cursor: pointer; transition: transform .15s, box-shadow .15s; align-content: start; }
+.vendor-card { padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; cursor: pointer; transition: transform .15s, box-shadow .15s; align-content: start; }
 .vendor-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .vendor-card.is-muted { opacity: .6; }
 .vendor-card h3 { font-size: 17px; overflow-wrap: anywhere; }
-.vc-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.vc-top .eyebrow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.vc-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-width: 0; }
+.vc-top .eyebrow { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.vc-top .badge { flex: none; }
 .vc-price { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; }
-.vc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; min-height: 36px; }
-.vc-meta { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; margin-left: auto; }
+.vc-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; min-height: 36px; min-width: 0; }
+.vc-foot .contacts { min-width: 0; }
+.vc-meta { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; margin-left: auto; flex: none; }
 .vc-meta span { display: inline-flex; align-items: center; gap: 3px; }
 .vc-meta .ic { width: 15px; height: 15px; }
 .contacts { display: flex; flex-wrap: wrap; gap: 6px; }

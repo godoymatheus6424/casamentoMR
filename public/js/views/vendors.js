@@ -229,7 +229,7 @@ export default {
           const paid = paidOf(v.id);
           const nFiles = filesOf(v.id).length;
           return html`<article class="card vendor-card ${v.status === 'descartado' ? 'is-muted' : ''}" data-act="open" data-id="${v.id}" tabindex="0">
-            <div class="vc-top"><span class="eyebrow">${v.category || 'Sem categoria'}</span>${badge(st.label, st.kind)}</div>
+            <div class="vc-top"><span class="eyebrow" title="${v.category || 'Sem categoria'}">${v.category || 'Sem categoria'}</span>${badge(st.label, st.kind)}</div>
             <h3>${v.name}</h3>
             ${v.contactName ? html`<p class="muted small">${v.contactName}</p>` : ''}
             <div class="vc-price">${price ? moneyShort(price) : html`<span class="muted">sem valor</span>`}</div>
