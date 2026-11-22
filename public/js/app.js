@@ -1,8 +1,8 @@
-import { api, setCsrf } from './api.js';
+import { api, setCsrf, setWorkspace } from './api.js';
 import { state, loadAll, onChange, refreshMe } from './store.js';
 import { html, icon, closeAllModals, openModal, fmtDateLong, daysBetween, todayISO, plural, applyTheme } from './ui.js';
-import { coupleTitle } from './domain.js';
-import { renderAuth, setLoggedInHandler } from './auth.js';
+import { coupleTitle, ROLE_LABELS } from './domain.js';
+import { renderAuth, setLoggedInHandler, authScreen, INVITE_ROLE } from './auth.js';
 import dashboard from './views/dashboard.js';
 import tasks from './views/tasks.js';
 import vendors from './views/vendors.js';
@@ -13,7 +13,7 @@ import timeline from './views/timeline.js';
 import documents from './views/documents.js';
 import notes from './views/notes.js';
 import gifts from './views/gifts.js';
-import settings from './views/settings.js';
+import settings, { deleteMyAccount } from './views/settings.js';
 
 const ROUTES = [
   { id: 'inicio', label: 'Visão geral', short: 'Início', icon: 'home', view: dashboard },
@@ -55,14 +55,120 @@ async function boot() {
 async function startSession(me) {
   state.user = me.user;
   state.workspace = me.workspace;
-  state.workspaceCount = me.workspaceCount || 1;
+  state.workspaceCount = me.workspaceCount || 0;
   setCsrf(me.csrf);
+  setWorkspace(me.workspace?.id);
+  // Abriu um link de convite já conectado(a): confirma antes de aceitar com esta conta.
+  const invite = inviteTokenFromHash();
+  if (invite) return renderAcceptInvite(invite);
+  // Assessoria sem casamento aberto (ainda não recebeu acesso, ou saiu de todos): fica no perfil.
+  if (!me.workspace) return renderPlannerHome();
   // Vindo da página inicial ou das telas de acesso, abre a Visão geral.
   if (/^#?\/?(entrar|cadastro|esqueci|redefinir)?(\?.*)?$/.test(location.hash)) history.replaceState(null, '', '#/inicio');
   await loadAll();
   renderShell();
 }
 setLoggedInHandler(async () => startSession(await api('GET', '/api/me')));
+
+// Outra aba trocou de casamento (a sessão é a mesma): recarrega para mostrar o casamento certo.
+let reloading = false;
+window.addEventListener('workspace:changed', () => {
+  if (reloading) return;
+  reloading = true;
+  closeAllModals();
+  api('GET', '/api/me').then(startSession).catch(() => location.reload()).finally(() => { reloading = false; });
+});
+
+const isPlanner = () => state.user?.kind === 'planner';
+
+function inviteTokenFromHash() {
+  const m = /^#\/convite\?(.*)$/.exec(location.hash);
+  return m ? new URLSearchParams(m[1]).get('token') : null;
+}
+async function renderAcceptInvite(token) {
+  let info;
+  try { info = await api('GET', `/api/invites/info?token=${encodeURIComponent(token)}`); }
+  catch (e) {
+    authScreen(html`<h1>Convite</h1><p class="muted center">${e.message}</p><button type="button" class="btn btn-ghost btn-block" data-go>Continuar</button>`, { back: false });
+    document.querySelector('[data-go]').onclick = async () => { history.replaceState(null, '', '#/inicio'); startSession(await api('GET', '/api/me')); };
+    return;
+  }
+  authScreen(html`<h1>Aceitar convite</h1>
+    <p class="muted center">Acesso ao planejamento do casamento <strong>${info.wedding}</strong>, como <strong>${INVITE_ROLE[info.role] || 'convidado(a)'}</strong>.</p>
+    <p class="muted center small">Você está conectado(a) como ${state.user.name} (${state.user.email || state.user.username}).</p>
+    <p class="form-error" role="alert"></p>
+    <div class="planner-actions">
+      <button type="button" class="btn btn-primary btn-block" data-accept>Aceitar e abrir o casamento</button>
+      <button type="button" class="btn btn-ghost btn-block" data-other>Usar outra conta</button>
+    </div>`, { back: false });
+  const card = document.querySelector('.auth-card');
+  card.querySelector('[data-accept]').onclick = async (e) => {
+    const b = e.currentTarget;
+    b.classList.add('loading');
+    try {
+      await api('POST', '/api/invites/accept', { token });
+      history.replaceState(null, '', '#/inicio');
+      await startSession(await api('GET', '/api/me'));
+    } catch (ex) { b.classList.remove('loading'); card.querySelector('.form-error').textContent = ex.message; }
+  };
+  card.querySelector('[data-other]').onclick = async () => {
+    try { await api('POST', '/api/logout'); } catch { /* ignora */ }
+    location.reload(); // o endereço continua com o convite: abre a tela para criar conta ou entrar
+  };
+}
+const ROLE = { ...ROLE_LABELS, member: 'Família / amigo' };
+
+// Casamentos da pessoa (a assessoria costuma ter vários), em botões para abrir cada um.
+function weddingList(list) {
+  const today = todayISO();
+  return html`<div class="ws-list">${list.map((w) => {
+    const days = w.date ? daysBetween(today, w.date) : null;
+    return html`<button type="button" class="ws-item ${w.current ? 'current' : ''}" data-ws="${w.id}" ${w.current ? 'disabled' : ''}>
+      <span class="ws-days">${days == null ? '—' : days > 0 ? html`<strong>${days}</strong><small>${days === 1 ? 'dia' : 'dias'}</small>` : days === 0 ? html`<strong>Hoje</strong>` : html`<small>realizado</small>`}</span>
+      <span class="ws-info"><strong>${w.name}</strong><small>${w.date ? fmtDateLong(w.date) : 'Data a definir'}${w.place ? ` · ${w.place}` : ''}</small><small>${ROLE[w.role] || ''}${w.access !== 'full' ? ' · só leitura' : ''}</small></span>
+      ${w.current ? html`<span class="badge b-ok">aberto</span>` : icon('chevron')}
+    </button>`;
+  })}</div>`;
+}
+function bindWeddingList(root, onDone = () => {}) {
+  root.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-ws]');
+    if (!b || b.disabled) return;
+    b.classList.add('loading');
+    try {
+      await api('POST', '/api/workspaces/switch', { id: b.dataset.ws });
+      onDone();
+      closeAllModals();
+      history.replaceState(null, '', '#/inicio');
+      await startSession(await api('GET', '/api/me'));
+    } catch { b.classList.remove('loading'); }
+  });
+}
+
+// Perfil da assessoria sem casamento aberto: lista (ou convite para pedir acesso), conta e sair.
+async function renderPlannerHome() {
+  let list = [];
+  try { list = await api('GET', '/api/workspaces'); } catch { /* lista vazia */ }
+  document.title = 'Meus casamentos · BRIDEx';
+  authScreen(html`<h1>Meus casamentos</h1>
+    <p class="muted center">Olá, ${state.user.name.split(' ')[0]}. ${list.length ? 'Escolha o casamento que deseja abrir.' : ''}</p>
+    ${list.length ? weddingList(list) : html`<div class="planner-empty">
+      <p>Ainda não há casamentos no seu perfil.</p>
+      <p class="muted small">Peça aos noivos um link de convite (em <strong>Configurações → Quem tem acesso → Convidar assessoria</strong>) e abra o link com este perfil. O casamento aparece aqui na hora.</p>
+    </div>`}
+    <div class="planner-actions">
+      ${list.length ? '' : html`<button type="button" class="btn btn-primary btn-block" data-act="reload">Atualizar</button>`}
+      <button type="button" class="btn btn-ghost btn-block" data-act="logout">${icon('logout')}<span>Sair</span></button>
+    </div>
+    <p class="auth-switch small"><button type="button" class="link-btn muted" data-act="delete">Excluir meu perfil</button></p>`, { wide: true, back: false });
+  const card = document.querySelector('.auth-card');
+  bindWeddingList(card);
+  card.querySelector('[data-act="logout"]').onclick = logout;
+  const rl = card.querySelector('[data-act="reload"]');
+  if (rl) rl.onclick = async () => startSession(await api('GET', '/api/me'));
+  card.querySelector('[data-act="delete"]').onclick = deleteMyAccount;
+}
+
 
 window.addEventListener('auth:expired', () => {
   if (!state.user) return;
@@ -91,7 +197,7 @@ function renderShell() {
         <span class="brand-mark">${icon('heart')}</span>
         <span class="brand-text"><strong id="brand-title"></strong><small id="brand-sub"></small></span>
       </a>
-      ${state.workspaceCount > 1 ? html`<button type="button" class="ws-switch" data-switch title="Trocar de casamento">${icon('users')}<span>Trocar casamento</span></button>` : ''}
+      ${state.workspaceCount > 1 || isPlanner() ? html`<button type="button" class="ws-switch" data-switch title="Meus casamentos">${icon('users')}<span>${isPlanner() ? 'Meus casamentos' : 'Trocar casamento'}</span></button>` : ''}
       <nav class="nav" aria-label="Seções">
         ${ROUTES.map((r) => html`<a href="#/${r.id}" data-route="${r.id}" title="${r.label}">${icon(r.icon)}<span>${r.label}</span></a>`)}
       </nav>
@@ -111,7 +217,12 @@ function renderShell() {
   app.querySelector('[data-switch]')?.addEventListener('click', openSwitcher);
   if (!shellBound) {
     shellBound = true;
-    window.addEventListener('hashchange', () => { if (state.user) { closeAllModals(); renderView(true); } });
+    window.addEventListener('hashchange', () => {
+      if (!state.user) return;
+      closeAllModals();
+      const invite = inviteTokenFromHash();
+      if (invite) renderAcceptInvite(invite); else renderView(true);
+    });
     onChange(() => { if (state.user) renderView(false); });
   }
   renderView(true);
@@ -132,7 +243,7 @@ function openMore() {
     body: html`<nav class="more-grid">
       ${ROUTES.map((r) => html`<a href="#/${r.id}" class="${r.id === current ? 'active' : ''}">${icon(r.icon)}<span>${r.short || r.label}</span></a>`)}
     </nav>
-    ${state.workspaceCount > 1 ? html`<button type="button" class="btn btn-ghost btn-block more-switch" data-sw>${icon('users')}<span>Trocar de casamento</span></button>` : ''}
+    ${state.workspaceCount > 1 || isPlanner() ? html`<button type="button" class="btn btn-ghost btn-block more-switch" data-sw>${icon('users')}<span>${isPlanner() ? 'Meus casamentos' : 'Trocar de casamento'}</span></button>` : ''}
     <div class="more-foot"><span class="me">${icon('user')} ${state.user.name}</span><button type="button" class="btn btn-ghost btn-sm" data-out>${icon('logout')}<span>Sair</span></button></div>`,
     onMount(mm) {
       mm.body.querySelectorAll('a').forEach((a) => { a.onclick = () => mm.close(); });
@@ -147,31 +258,10 @@ function openMore() {
 async function openSwitcher() {
   let list;
   try { list = await api('GET', '/api/workspaces'); } catch (e) { return; }
-  const today = todayISO();
-  const ROLE = { owner: 'Noivo(a)', couple: 'Noivo(a)', planner: 'Assessoria', member: 'Família / amigo' };
   openModal({
     title: 'Meus casamentos',
-    body: html`<div class="ws-list">${list.map((w) => {
-      const days = w.date ? daysBetween(today, w.date) : null;
-      return html`<button type="button" class="ws-item ${w.current ? 'current' : ''}" data-ws="${w.id}" ${w.current ? 'disabled' : ''}>
-        <span class="ws-days">${days == null ? '—' : days > 0 ? html`<strong>${days}</strong><small>${days === 1 ? 'dia' : 'dias'}</small>` : days === 0 ? html`<strong>Hoje</strong>` : html`<small>realizado</small>`}</span>
-        <span class="ws-info"><strong>${w.name}</strong><small>${w.date ? fmtDateLong(w.date) : 'Data a definir'}${w.place ? ` · ${w.place}` : ''}</small><small>${ROLE[w.role] || ''}${w.access !== 'full' ? ' · só leitura' : ''}</small></span>
-        ${w.current ? html`<span class="badge b-ok">aberto</span>` : icon('chevron')}
-      </button>`;
-    })}</div>`,
-    onMount(m) {
-      m.body.onclick = async (e) => {
-        const b = e.target.closest('[data-ws]');
-        if (!b || b.disabled) return;
-        b.classList.add('loading');
-        try {
-          await api('POST', '/api/workspaces/switch', { id: b.dataset.ws });
-          closeAllModals();
-          history.replaceState(null, '', '#/inicio');
-          await startSession(await api('GET', '/api/me'));
-        } catch { b.classList.remove('loading'); }
-      };
-    },
+    body: html`${weddingList(list)}${isPlanner() && list.length === 1 ? html`<p class="hint">${icon('alert')} Quando outro casal mandar um link de convite, abra o link com este perfil e o casamento aparece aqui.</p>` : ''}`,
+    onMount(m) { bindWeddingList(m.body); },
   });
 }
 

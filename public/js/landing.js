@@ -21,7 +21,7 @@ const FAQ = [
   ['Preciso de cartão de crédito para testar?', 'Não. O período de teste é gratuito, com todas as funções liberadas, e não pedimos cartão.'],
   ['O que acontece quando o teste acaba?', 'Seus dados continuam guardados e disponíveis para consulta e download. Para continuar editando, basta assinar um dos planos.'],
   ['Meu par e a nossa assessoria podem usar junto?', 'Sim. Os noivos dão acesso ao par, à assessoria e à família. Todos veem o mesmo planejamento, sempre atualizado.'],
-  ['Sou assessora. Preciso de uma conta por casamento?', 'Não. Você tem um único perfil e alterna entre os casamentos que atende. Cada casal dá acesso pelo seu e-mail.'],
+  ['Sou assessora. Preciso de uma conta por casamento?', 'Não. Você cria um único perfil de assessoria e alterna entre os casamentos que atende. Cada casal manda um link de convite e assina o próprio planejamento; quando o contrato termina, você sai do casamento e o perfil continua seu.'],
   ['Funciona no celular?', 'No celular, no tablet e no computador. No celular, adicione à tela de início para abrir como um aplicativo.'],
   ['Meus dados ficam seguros?', 'Cada casamento fica isolado dos demais, as senhas são criptografadas e os arquivos só abrem para quem tem acesso. Não exibimos anúncios nem vendemos dados.'],
 ];
@@ -103,7 +103,8 @@ export function renderLanding() {
         <div class="lp-head left reveal">
           <p class="lp-kicker">Assessoras e cerimonialistas</p>
           <h2>Todos os seus casamentos, <em>num só perfil</em></h2>
-          <p>Os noivos dão acesso pelo seu e-mail e você acompanha o planejamento com eles: contratos, fornecedores, convidados e o cronograma do dia. Alterne entre os casamentos sem criar uma conta para cada casal.</p>
+          <p>Os noivos mandam um link de convite e você acompanha o planejamento com eles: contratos, fornecedores, convidados e o cronograma do dia. Alterne entre os casamentos sem criar uma conta para cada casal.</p>
+          ${open ? html`<div><a href="#/cadastro?perfil=assessoria" class="lp-btn ghost-light">Criar perfil de assessoria</a></div>` : ''}
         </div>
         <div class="lp-mock reveal" aria-hidden="true">
           <p class="lp-mock-title">Meus casamentos</p>

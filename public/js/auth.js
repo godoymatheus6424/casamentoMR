@@ -9,10 +9,10 @@ const app = document.getElementById('app');
 let onLoggedIn = async () => {};
 export function setLoggedInHandler(fn) { onLoggedIn = fn; }
 
-function authScreen(inner, { wide = false } = {}) {
+export function authScreen(inner, { wide = false, back = true } = {}) {
   window.scrollTo(0, 0);
   app.innerHTML = String(html`<div class="auth">
-    <a href="#/" class="auth-back">${icon('chevron', 'flip')}<span>${BRAND}</span></a>
+    ${back ? html`<a href="#/" class="auth-back">${icon('chevron', 'flip')}<span>${BRAND}</span></a>` : html`<span class="auth-back">${BRAND}</span>`}
     <div class="auth-card ${wide ? 'wide' : ''}">
       <div class="auth-mark">${icon('heart')}</div>
       ${inner}
@@ -49,9 +49,11 @@ export function renderAuth(msg = '') {
   const hash = location.hash.replace(/^#\/?/, '');
   const route = hash.split('?')[0];
   if (state.status.needsSetup) return renderSetup();
-  if (route === 'cadastro' && state.status.signupOpen) return renderSignup();
+  const params = new URLSearchParams(hash.split('?')[1] || '');
+  if (route === 'cadastro' && state.status.signupOpen) return renderSignup(params.get('perfil') === 'assessoria' ? 'planner' : 'couple');
   if (route === 'esqueci') return renderForgot();
-  if (route === 'redefinir') return renderReset(new URLSearchParams(hash.split('?')[1] || '').get('token') || '');
+  if (route === 'redefinir') return renderReset(params.get('token') || '');
+  if (route === 'convite') return renderInvite(params.get('token') || '');
   // Endereço principal sem sessão: página de apresentação. Qualquer outro (#/entrar, páginas do app): login.
   if (!route && !msg) return renderLanding();
   return renderLogin(msg);
@@ -83,34 +85,45 @@ function renderLogin(msg = '') {
   });
 }
 
-function renderSignup() {
+// Cadastro: noivos (cria o casamento, com teste grátis) ou assessoria (só o perfil; os casamentos
+// chegam quando ela abre o link de convite que cada casal manda).
+function renderSignup(kind = 'couple') {
   const days = state.status.trialDays || 14;
-  authScreen(html`<h1>Criar conta</h1>
-    <p class="muted center">${days} dias grátis com tudo liberado. Não pedimos cartão.</p>
+  const planner = kind === 'planner';
+  authScreen(html`<h1>${planner ? 'Perfil de assessoria' : 'Criar conta'}</h1>
+    <div class="seg-kind" role="tablist" aria-label="Tipo de conta">
+      <a href="#/cadastro" role="tab" aria-selected="${!planner}" class="${planner ? '' : 'on'}">Somos os noivos</a>
+      <a href="#/cadastro?perfil=assessoria" role="tab" aria-selected="${planner}" class="${planner ? 'on' : ''}">Sou assessora</a>
+    </div>
+    <p class="muted center">${planner
+      ? 'Um único perfil para todos os casamentos que você atende. Cada casal manda um link de convite e assina o próprio planejamento.'
+      : `${days} dias grátis com tudo liberado. Não pedimos cartão.`}</p>
     <form id="signup" class="stack" novalidate>
-      <div class="two">
+      ${planner ? '' : html`<div class="two">
         <div class="field"><label for="sp1">Nome de um(a) noivo(a)</label><input id="sp1" name="partner1" autocomplete="off"></div>
         <div class="field"><label for="sp2">Nome do(a) outro(a)</label><input id="sp2" name="partner2" autocomplete="off"></div>
       </div>
       <div class="field"><label for="sd">Data do casamento <small>(se já souberem)</small></label><input id="sd" type="date" name="date"></div>
-      <hr>
-      <div class="field"><label for="sn">Seu nome</label><input id="sn" name="name" autocomplete="name" required></div>
+      <hr>`}
+      <div class="field"><label for="sn">${planner ? 'Seu nome ou da assessoria' : 'Seu nome'}</label><input id="sn" name="name" autocomplete="${planner ? 'organization' : 'name'}" required></div>
       <div class="field"><label for="se">E-mail</label><input id="se" name="email" type="email" autocomplete="email" autocapitalize="none" spellcheck="false" required></div>
       ${pwField('spw', 'password', 'Senha (mín. 8 caracteres, com letras e números)', 'new-password')}
       ${pwField('spw2', 'password2', 'Confirme a senha', 'new-password')}
       <label class="check terms"><input type="checkbox" name="terms"><span>Li e aceito os <a href="/termos.html" target="_blank" rel="noopener" class="link">Termos de Uso</a> e a <a href="/privacidade.html" target="_blank" rel="noopener" class="link">Política de Privacidade</a></span></label>
       <p class="form-error" role="alert"></p>
-      <button class="btn btn-primary btn-block" type="submit">Começar meu teste grátis</button>
+      <button class="btn btn-primary btn-block" type="submit">${planner ? 'Criar meu perfil' : 'Começar meu teste grátis'}</button>
     </form>
     <p class="auth-switch">Já tem conta? <a href="#/entrar" class="link">Entrar</a></p>`, { wide: true });
   const f = app.querySelector('#signup');
   bindForm(f, async () => {
     if (f.password.value !== f.password2.value) throw new Error('As senhas não conferem.');
     if (!f.terms.checked) throw new Error('Para continuar, aceite os Termos de Uso e a Política de Privacidade.');
-    await api('POST', '/api/signup', {
-      partner1: f.partner1.value, partner2: f.partner2.value, date: f.date.value,
-      name: f.name.value, email: f.email.value, password: f.password.value, acceptTerms: true,
-    });
+    await api('POST', '/api/signup', planner
+      ? { kind: 'planner', name: f.name.value, email: f.email.value, password: f.password.value, acceptTerms: true }
+      : {
+        partner1: f.partner1.value, partner2: f.partner2.value, date: f.date.value,
+        name: f.name.value, email: f.email.value, password: f.password.value, acceptTerms: true,
+      });
     history.replaceState(null, '', '#/inicio');
     await onLoggedIn();
   });
@@ -186,5 +199,52 @@ function renderReset(token) {
     const ok = app.querySelector('.form-error');
     ok.textContent = 'Senha alterada! Entre com a nova senha.';
     ok.classList.add('form-ok');
+  });
+}
+
+// Convite por link (enviado pelos noivos por WhatsApp, por exemplo): cria a conta ou entra numa existente.
+export const INVITE_ROLE = { couple: 'noivo(a)', planner: 'assessoria', member: 'família / amigo(a)' };
+async function renderInvite(token, mode = 'signup') {
+  let info;
+  try { info = await api('GET', `/api/invites/info?token=${encodeURIComponent(token)}`); }
+  catch (e) {
+    authScreen(html`<h1>Convite</h1>
+      <p class="muted center">${e.message}</p>
+      <a href="#/entrar" class="btn btn-ghost btn-block">Ir para o login</a>`);
+    return;
+  }
+  const planner = info.role === 'planner';
+  const signup = mode === 'signup';
+  authScreen(html`<h1>Você foi convidado(a)</h1>
+    <p class="muted center">Acesso ao planejamento do casamento <strong>${info.wedding}</strong>, como <strong>${INVITE_ROLE[info.role] || 'convidado(a)'}</strong>.</p>
+    <div class="seg-kind" role="tablist" aria-label="Como entrar">
+      <a href="#" role="tab" data-mode="signup" aria-selected="${signup}" class="${signup ? 'on' : ''}">Criar conta</a>
+      <a href="#" role="tab" data-mode="login" aria-selected="${!signup}" class="${signup ? '' : 'on'}">Já tenho conta</a>
+    </div>
+    ${planner ? html`<p class="muted center small">${signup ? 'Sua conta vira o seu perfil de assessoria: os próximos casais que convidarem você aparecem no mesmo perfil.' : 'Entre com o seu perfil de assessoria e este casamento entra em "Meus casamentos".'}</p>` : ''}
+    <form id="invite" class="stack" novalidate>
+      ${signup ? html`<div class="field"><label for="in">${planner ? 'Seu nome ou da assessoria' : 'Seu nome'}</label><input id="in" name="name" autocomplete="name" required value="${info.name || ''}"></div>` : ''}
+      <div class="field"><label for="ie">E-mail</label><input id="ie" name="email" type="email" autocomplete="${signup ? 'email' : 'username'}" autocapitalize="none" spellcheck="false" required><small>${signup ? 'É o seu login. Não enviamos nada para confirmar.' : ''}</small></div>
+      ${pwField('ipw', 'password', signup ? 'Crie uma senha (mín. 8 caracteres, com letras e números)' : 'Senha', signup ? 'new-password' : 'current-password')}
+      ${signup ? pwField('ipw2', 'password2', 'Confirme a senha', 'new-password') : ''}
+      ${signup ? html`<label class="check terms"><input type="checkbox" name="terms"><span>Li e aceito os <a href="/termos.html" target="_blank" rel="noopener" class="link">Termos de Uso</a> e a <a href="/privacidade.html" target="_blank" rel="noopener" class="link">Política de Privacidade</a></span></label>` : ''}
+      <p class="form-error" role="alert"></p>
+      <button class="btn btn-primary btn-block" type="submit">${signup ? 'Criar conta e entrar' : 'Entrar e aceitar'}</button>
+    </form>
+    ${signup ? '' : html`<p class="auth-switch"><a href="#/esqueci" class="link small">Esqueci minha senha</a></p>`}`, { wide: signup });
+  app.querySelectorAll('[data-mode]').forEach((a) => {
+    a.onclick = (e) => { e.preventDefault(); if (a.dataset.mode !== mode) renderInvite(token, a.dataset.mode); };
+  });
+  const f = app.querySelector('#invite');
+  bindForm(f, async () => {
+    if (signup) {
+      if (f.password.value !== f.password2.value) throw new Error('As senhas não conferem.');
+      if (!f.terms.checked) throw new Error('Para continuar, aceite os Termos de Uso e a Política de Privacidade.');
+    }
+    await api('POST', '/api/invites/accept', signup
+      ? { token, mode: 'signup', name: f.name.value, email: f.email.value, password: f.password.value, acceptTerms: true }
+      : { token, mode: 'login', email: f.email.value, password: f.password.value }, { allow401: true });
+    history.replaceState(null, '', '#/inicio');
+    await onLoggedIn();
   });
 }

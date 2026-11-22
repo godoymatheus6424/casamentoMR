@@ -168,11 +168,14 @@ export function selectOptions(options, current) {
 // ---------------------------------------------------------------------------
 // Tema (automático / claro / escuro)
 // ---------------------------------------------------------------------------
+// Tema: "dark" (padrão, o verde-floresta do site), "light" (papel) ou "auto" (segue o aparelho).
+export function getTheme() {
+  let t = 'dark';
+  try { t = localStorage.getItem('theme') || 'dark'; } catch { /* ignora */ }
+  return ['dark', 'light', 'auto'].includes(t) ? t : 'dark';
+}
 export function applyTheme() {
-  let t = 'auto';
-  try { t = localStorage.getItem('theme') || 'auto'; } catch { /* ignora */ }
-  if (t === 'auto') delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = t;
+  document.documentElement.dataset.theme = getTheme();
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { api, setWorkspace } from './api.js';
 
 export const COLLS = ['vendors', 'payments', 'budget', 'tasks', 'guests', 'tables', 'timeline', 'gifts', 'notes'];
 
@@ -31,8 +31,11 @@ export async function loadAll() {
 export async function refreshMe() {
   const me = await api('GET', '/api/me');
   state.user = me.user;
+  // Se o casamento da sessão mudou (outra aba, acesso removido), recarrega a tela no casamento certo.
+  if ((me.workspace?.id || null) !== (state.workspace?.id || null)) { window.dispatchEvent(new Event('workspace:changed')); return me; }
   state.workspace = me.workspace;
-  state.workspaceCount = me.workspaceCount || 1;
+  state.workspaceCount = me.workspaceCount || 0;
+  setWorkspace(me.workspace?.id);
   return me;
 }
 // Quando o servidor recusa uma edição por causa do plano (402), atualiza o aviso na tela.

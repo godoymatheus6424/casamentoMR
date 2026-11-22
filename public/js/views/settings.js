@@ -1,10 +1,10 @@
 import { api } from '../api.js';
 import { state, emit, loadAll, refreshMe } from '../store.js';
-import { html, icon, pageHead, formModal, openModal, toast, run, fmtDateTime, fmtSize, confirmDialog, selectOptions, applyTheme, progress } from '../ui.js';
+import { html, icon, pageHead, formModal, openModal, toast, run, fmtDateTime, fmtSize, confirmDialog, selectOptions, applyTheme, getTheme, progress } from '../ui.js';
 import { weddingForm } from '../forms.js';
 import { ROLE_LABELS, ROLE_OPTIONS, isManager } from '../domain.js';
 
-const ui = { users: null, loading: false, refreshed: false };
+const ui = { users: null, loading: false, refreshed: false, invites: null, invLoading: false };
 
 async function loadUsers() {
   if (ui.loading) return;
@@ -51,23 +51,77 @@ function accountForm() {
   });
 }
 
-function userForm(role = 'couple') {
+function inviteForm(role = 'couple') {
+  const planner = role === 'planner';
   formModal({
-    title: 'Adicionar pessoa',
-    intro: 'Todas as pessoas veem e editam o planejamento. Só os noivos podem adicionar ou remover acessos.',
+    title: planner ? 'Convidar assessoria' : 'Convidar pessoa',
+    intro: 'Vamos gerar um link de convite para vocês mandarem por WhatsApp ou como preferirem. Quem abrir o link cria a própria conta (ou entra na que já tem) e passa a ver e editar o planejamento. O link vale por 7 dias e só pode ser usado uma vez.',
     values: { role },
     fields: [
       { name: 'role', label: 'Quem é', type: 'select', full: true, options: ROLE_OPTIONS },
-      { name: 'name', label: 'Nome', full: true },
-      { name: 'email', label: 'E-mail', type: 'email', required: true, full: true, autocomplete: 'off' },
-      { name: 'password', label: 'Senha inicial', type: 'password', full: true, autocomplete: 'new-password', hint: 'Se a pessoa já usa o planejador (ex.: uma assessora que atende outros casais), deixe em branco: ela entra com a senha dela. Senão, defina uma senha (mín. 8 caracteres, com letras e números) e combine com ela.' },
+      { name: 'name', label: 'Nome', full: true, hint: 'Opcional, só para vocês identificarem o convite na lista.' },
     ],
-    submitLabel: 'Dar acesso',
+    submitLabel: 'Gerar link',
     onSubmit: async (d) => {
-      const r = await api('POST', '/api/users', d);
-      ui.users = null;
-      await loadAll();
-      toast(r.linked ? `${r.name} já tinha conta e agora tem acesso a este casamento` : 'Acesso criado');
+      const r = await api('POST', '/api/invites', d);
+      ui.invites = null;
+      emit();
+      inviteLink(r);
+    },
+  });
+}
+
+// Link do convite: copiar ou mandar direto pelo WhatsApp. Só aparece agora (o servidor guarda apenas o hash).
+function inviteLink(r) {
+  const who = { couple: 'meu par no planejamento', planner: 'assessoria do nosso casamento', member: 'acompanhar o planejamento do nosso casamento' }[r.role];
+  const text = `Oi! Este é o convite para você entrar no BRIDEx como ${who}. Crie sua conta (ou entre na sua) por este link, que vale por 7 dias: ${r.url}`;
+  openModal({
+    title: 'Link de convite',
+    size: 'sm',
+    body: html`<p class="confirm-text">Mande este link para ${r.name || (r.role === 'planner' ? 'a assessoria' : 'a pessoa')}. Ele vale por 7 dias e funciona uma única vez.</p>
+      <div class="invite-link"><input type="text" readonly value="${r.url}" aria-label="Link do convite"><button type="button" class="btn btn-ghost btn-sm" data-copy>Copiar</button></div>
+      <p class="muted small" style="margin-top:12px">Guarde agora: por segurança, o link não fica salvo. Se perder, cancele este convite e gere outro.</p>`,
+    footer: html`<span class="spacer"></span><a class="btn btn-ghost" href="https://wa.me/?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">${icon('chat')}<span>WhatsApp</span></a><button type="button" class="btn btn-primary" data-ok>Pronto</button>`,
+    onMount(m) {
+      m.foot.querySelector('[data-ok]').onclick = () => m.close();
+      m.body.querySelector('[data-copy]').onclick = async () => {
+        const input = m.body.querySelector('.invite-link input');
+        try { await navigator.clipboard.writeText(input.value); } catch { input.select(); document.execCommand('copy'); }
+        toast('Link copiado');
+      };
+    },
+  });
+}
+
+async function loadInvites() {
+  if (ui.invLoading) return;
+  ui.invLoading = true;
+  try { ui.invites = await api('GET', '/api/invites'); } catch { ui.invites = []; }
+  ui.invLoading = false;
+  emit();
+}
+
+async function cancelInvite(id) {
+  if (!(await confirmDialog('Cancelar este convite? O link deixa de funcionar.', { ok: 'Cancelar convite' }))) return;
+  await run(async () => {
+    await api('DELETE', `/api/invites/${id}`);
+    ui.invites = null;
+    emit();
+  });
+}
+
+// Excluir a própria conta: assessoria e convidados (quem criou o casamento exclui o casamento inteiro).
+export function deleteMyAccount() {
+  const planner = state.user?.kind === 'planner';
+  formModal({
+    title: planner ? 'Excluir meu perfil' : 'Excluir minha conta',
+    intro: `Apaga a sua conta e remove o seu acesso a ${planner ? 'todos os casamentos' : 'este casamento'}. O planejamento continua com os noivos. Não dá para desfazer.`,
+    fields: [{ name: 'password', label: 'Sua senha', type: 'password', required: true, full: true, autocomplete: 'current-password' }],
+    submitLabel: planner ? 'Excluir perfil' : 'Excluir conta',
+    onSubmit: async (d) => {
+      await api('DELETE', '/api/me', { password: d.password });
+      location.hash = '';
+      location.reload();
     },
   });
 }
@@ -95,9 +149,12 @@ function roleForm(u) {
 
 async function leaveWorkspace() {
   const many = (state.workspaceCount || 1) > 1;
+  const planner = state.user?.kind === 'planner';
   const ok = await confirmDialog(many
     ? 'Sair deste casamento? Você perde o acesso a ele, mas continua com os outros casamentos.'
-    : 'Sair deste casamento? Como você não participa de nenhum outro, sua conta será excluída.', { ok: 'Sair do casamento' });
+    : planner
+      ? 'Sair deste casamento? Você perde o acesso a ele, mas continua com o seu perfil de assessoria para os próximos casamentos.'
+      : 'Sair deste casamento? Como você não participa de nenhum outro, sua conta será excluída.', { ok: 'Sair do casamento' });
   if (!ok) return;
   await run(async () => {
     await api('POST', '/api/workspaces/leave');
@@ -180,8 +237,7 @@ function planCard() {
 
 export default {
   render() {
-    let theme = 'auto';
-    try { theme = localStorage.getItem('theme') || 'auto'; } catch { /* ignora */ }
+    const theme = getTheme();
     const users = ui.users;
     const owner = isOwner();
     const manager = isManager(state.workspace?.role);
@@ -199,7 +255,7 @@ export default {
 
         <section class="card o-5">
           <header class="card-head"><h2>${icon('sparkle')} Aparência</h2></header>
-          <div class="pad field"><label for="theme-sel">Tema</label><select id="theme-sel">${selectOptions([{ value: 'auto', label: 'Automático (segue o aparelho)' }, { value: 'light', label: 'Claro' }, { value: 'dark', label: 'Escuro' }], theme)}</select></div>
+          <div class="pad field"><label for="theme-sel">Tema</label><select id="theme-sel">${selectOptions([{ value: 'dark', label: 'Verde-floresta (padrão, como o site)' }, { value: 'light', label: 'Claro (papel)' }, { value: 'auto', label: 'Automático (segue o aparelho)' }], theme)}</select></div>
         </section>
 
         <section class="card o-7">
@@ -224,7 +280,7 @@ export default {
         </section>
 
         <section class="card o-3">
-          <header class="card-head"><h2>${icon('users')} Quem tem acesso</h2>${manager ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="adduser">${icon('plus')}<span>Pessoa</span></button>` : ''}</header>
+          <header class="card-head"><h2>${icon('users')} Quem tem acesso</h2>${manager ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="adduser">${icon('plus')}<span>Convidar</span></button>` : ''}</header>
           ${users == null ? html`<p class="pad muted">Carregando…</p>` : html`<div class="list">${users.map((u) => {
             const editable = manager && !u.isMe && u.role !== 'owner';
             return html`<div class="row ${editable ? 'clickable' : ''}" ${editable ? html`data-act="role" data-id="${u.id}"` : ''}>
@@ -233,10 +289,15 @@ export default {
               <span class="badge ${u.role === 'planner' ? 'b-accent' : u.role === 'member' ? 'b-muted' : 'b-ok'}">${ROLE_LABELS[u.role] || u.role}</span>
               ${editable ? icon('chevron') : ''}
             </div>`;
-          })}</div>`}
-          ${manager && users && !users.some((u) => u.role === 'planner') ? html`<div class="pad invite-planner">
-            <p class="small muted">Vocês têm assessoria ou cerimonial? Dê acesso para ela acompanhar e editar o planejamento junto com vocês.</p>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="addplanner">${icon('plus')}<span>Adicionar assessoria</span></button>
+          })}${manager ? (ui.invites || []).map((v) => html`<div class="row invite-row">
+              <span class="avatar">${icon('link')}</span>
+              <div class="row-main"><div class="row-title">${v.name || 'Convite por link'} <span class="badge b-warn">aguardando</span></div><div class="row-meta"><span>vale até ${fmtDay(v.expiresAt)}</span></div></div>
+              <span class="badge ${v.role === 'planner' ? 'b-accent' : v.role === 'member' ? 'b-muted' : 'b-ok'}">${ROLE_LABELS[v.role] || v.role}</span>
+              <button type="button" class="btn-icon sm" data-act="cancelinvite" data-id="${v.id}" title="Cancelar convite" aria-label="Cancelar convite">${icon('x')}</button>
+            </div>`) : ''}</div>`}
+          ${manager && users && !users.some((u) => u.role === 'planner') && !(ui.invites || []).some((v) => v.role === 'planner') ? html`<div class="pad invite-planner">
+            <p class="small muted">Vocês têm assessoria ou cerimonial? Mandem um link de convite para ela acompanhar e editar o planejamento junto com vocês, inclusive contratos e documentos.</p>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="addplanner">${icon('plus')}<span>Convidar assessoria</span></button>
           </div>` : ''}
         </section>
 
@@ -252,14 +313,15 @@ export default {
           <div class="pad"><button type="button" class="btn btn-danger-ghost" data-act="delaccount">${icon('trash')}<span>Excluir conta e todos os dados</span></button></div>
         </section>` : html`<section class="card o-8">
           <header class="card-head"><h2>${icon('logout')} Sair deste casamento</h2></header>
-          <p class="pad muted">Remove o seu acesso a "${state.workspace?.name || 'este casamento'}". O planejamento continua com os noivos.</p>
-          <div class="pad"><button type="button" class="btn btn-danger-ghost" data-act="leave">${icon('logout')}<span>Sair deste casamento</span></button></div>
+          <p class="pad muted">Remove o seu acesso a "${state.workspace?.name || 'este casamento'}". O planejamento continua com os noivos.${state.user?.kind === 'planner' ? ' Seu perfil de assessoria e os outros casamentos continuam.' : ''}</p>
+          <div class="pad actions"><button type="button" class="btn btn-danger-ghost" data-act="leave">${icon('logout')}<span>Sair deste casamento</span></button><button type="button" class="btn btn-danger-ghost" data-act="delme">${icon('trash')}<span>${state.user?.kind === 'planner' ? 'Excluir meu perfil' : 'Excluir minha conta'}</span></button></div>
         </section>`}
        </div>
       </div>`;
   },
   mount(el) {
     if (ui.users == null) loadUsers();
+    if (ui.invites == null && isManager(state.workspace?.role)) loadInvites();
     if (!ui.refreshed) { ui.refreshed = true; refreshMe().then(emit).catch(() => {}); }
     el.onclick = async (e) => {
       const a = e.target.closest('[data-act]');
@@ -269,8 +331,9 @@ export default {
         case 'account': accountForm(); break;
         case 'password': passwordForm(); break;
         case 'devices': devicesDialog(); break;
-        case 'adduser': userForm(); break;
-        case 'addplanner': userForm('planner'); break;
+        case 'adduser': inviteForm(); break;
+        case 'addplanner': inviteForm('planner'); break;
+        case 'cancelinvite': cancelInvite(a.dataset.id); break;
         case 'role': {
           const u = ui.users?.find((x) => String(x.id) === a.dataset.id);
           if (u) roleForm(u);
@@ -278,6 +341,7 @@ export default {
         }
         case 'delaccount': deleteAccountDialog(); break;
         case 'leave': leaveWorkspace(); break;
+        case 'delme': deleteMyAccount(); break;
       }
     };
     el.onchange = (e) => {
@@ -290,4 +354,4 @@ export default {
 };
 
 // Ao sair da tela, força atualizar o plano da próxima vez que ela abrir.
-window.addEventListener('hashchange', () => { ui.refreshed = false; });
+window.addEventListener('hashchange', () => { ui.refreshed = false; ui.invites = null; });

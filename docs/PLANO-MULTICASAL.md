@@ -14,7 +14,11 @@ Modelo de receita: assinatura **R$ 9,90/mês** ou **R$ 89/ano**, com **14 dias g
 | Período de teste; quando acaba sem assinatura, o espaço fica **só leitura** (nada é apagado) | ✅ |
 | Limite de armazenamento por espaço | ✅ |
 | Tipos de acesso: **Noivo(a)**, **Assessoria** e **Família/amigo**. Só os noivos adicionam, removem ou mudam acessos | ✅ |
-| **Perfil da assessoria:** uma conta só, com acesso a vários casamentos e troca entre eles ("Meus casamentos"). Os noivos dão acesso informando o e-mail dela | ✅ |
+| **Perfil da assessoria:** uma conta só, com acesso a vários casamentos e troca entre eles ("Meus casamentos"). Os noivos dão acesso por link de convite | ✅ |
+| Cadastro próprio da assessoria ("Criar conta → Sou assessora"): perfil sem casamento, que recebe os casamentos quando cada casal dá acesso | ✅ |
+| Convites por link, sem depender de e-mail: os noivos geram o link (vale 7 dias, uso único, pode ser cancelado) e mandam por WhatsApp; quem abre cria a própria conta ou entra na que já tem. Os noivos nunca definem a senha de ninguém | ✅ |
+| O perfil da assessoria continua existindo quando ela é removida, sai do último casamento ou o casamento é excluído; ela pode excluir o próprio perfil | ✅ |
+| Proteção entre abas: se a sessão trocar de casamento em outra aba, a tela antiga não lê nem grava no casamento errado | ✅ |
 | "Sair deste casamento" para quem não é dono(a) (ex.: a assessoria ao fim do contrato) | ✅ |
 | A assessoria **abre, baixa e envia contratos** e demais documentos do casamento (requisito: manter isso mesmo se um dia houver opção de esconder a parte financeira) | ✅ |
 | Exportar dados e **excluir conta** (LGPD) | ✅ |
@@ -38,7 +42,7 @@ Modelo de receita: assinatura **R$ 9,90/mês** ou **R$ 89/ano**, com **14 dias g
 
 ## Fase 4: crescimento
 
-- **Plano para assessoras:** um login com vários casamentos (o modelo de dados já suporta: um usuário pode pertencer a vários espaços).
+- **Plano para assessoras:** o perfil de assessoria já existe (gratuito, sem casamento próprio); falta decidir se haverá cobrança ou benefícios para assessoras (ex.: criar o casamento para o cliente).
 - Site do casal com confirmação de presença (RSVP) online para os convidados.
 - Divulgação: Instagram/TikTok, grupos de noivas, Pinterest e parcerias com assessoras.
 

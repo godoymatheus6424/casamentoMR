@@ -37,6 +37,7 @@ const MIN = 60e3, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const SESSION_SHORT = 12 * HOUR;
 const SESSION_LONG = 30 * DAY;
 const RESET_TTL = HOUR;
+const INVITE_TTL = 7 * DAY;     // validade do link de convite
 const MAX_MEMBERS = 8;
 const LOGIN_MAX_PER_IP = 10;      // tentativas por IP a cada 15 min
 const LOCK_AFTER = 5;             // falhas seguidas por usuário
@@ -80,7 +81,7 @@ const { S, tx } = helpers(db);
 // Utilidades
 // ---------------------------------------------------------------------------
 class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, code) { super(message); this.status = status; this.code = code; }
 }
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -214,7 +215,7 @@ function defaultWorkspace(userId) {
   if (last && S('SELECT 1 FROM memberships WHERE user_id = ? AND workspace_id = ?').get(userId, last)) return last;
   return S("SELECT workspace_id FROM memberships WHERE user_id = ? ORDER BY (role = 'owner') DESC, created_at DESC LIMIT 1").get(userId)?.workspace_id || null;
 }
-function createSession(req, res, userId, persistent, workspaceId) {
+function createSession(req, res, userId, persistent, workspaceId = null) {
   const token = crypto.randomBytes(32).toString('base64url');
   const now = Date.now();
   const ttl = persistent ? SESSION_LONG : SESSION_SHORT;
@@ -229,19 +230,27 @@ function getSession(req) {
   if (!token || token.length > 100) return null;
   const h = sha256(token);
   const now = Date.now();
-  const s = S(`SELECT s.*, u.name, u.username, u.email, m.role,
-                      w.name AS ws_name, w.plan, w.trial_ends_at, w.paid_until
-               FROM sessions s
-               JOIN users u ON u.id = s.user_id
-               JOIN memberships m ON m.user_id = s.user_id AND m.workspace_id = s.workspace_id
-               JOIN workspaces w ON w.id = s.workspace_id
-               WHERE s.token_hash = ?`).get(h);
+  const q = () => S(`SELECT s.*, u.name, u.username, u.email, u.kind, m.role,
+                            w.name AS ws_name, w.plan, w.trial_ends_at, w.paid_until
+                     FROM sessions s
+                     JOIN users u ON u.id = s.user_id
+                     LEFT JOIN memberships m ON m.user_id = s.user_id AND m.workspace_id = s.workspace_id
+                     LEFT JOIN workspaces w ON w.id = s.workspace_id
+                     WHERE s.token_hash = ?`).get(h);
+  let s = q();
   if (!s) return null;
   if (s.expires_at <= now) { S('DELETE FROM sessions WHERE token_hash = ?').run(h); return null; }
+  // Perdeu o acesso ao casamento aberto: vai para outro dele; sem nenhum, só a assessoria continua conectada
+  // (no perfil, sem casamento aberto).
+  if (!s.workspace_id || !s.role) {
+    const next = defaultWorkspace(s.user_id);
+    if (!next && s.kind !== 'planner') { S('DELETE FROM sessions WHERE token_hash = ?').run(h); return null; }
+    if (next !== s.workspace_id) { S('UPDATE sessions SET workspace_id = ? WHERE token_hash = ?').run(next, h); s = q(); }
+  }
   if (now - s.last_seen > 5 * MIN) {
     S('UPDATE sessions SET last_seen = ?, expires_at = ? WHERE token_hash = ?').run(now, now + s.ttl, h);
   }
-  return { ...s, token, tokenHash: h, access: workspaceAccess(s, now) };
+  return { ...s, token, tokenHash: h, access: s.workspace_id ? workspaceAccess(s, now) : 'none' };
 }
 function workspaceInfo(s) {
   const used = S('SELECT COALESCE(SUM(size), 0) AS n FROM files WHERE workspace_id = ?').get(s.workspace_id).n;
@@ -343,6 +352,49 @@ function createAccount({ name, email, hash, partner1, partner2, date, plan }) {
   return { userId, ws };
 }
 
+// Quem fica sem nenhum casamento perde a conta, exceto a assessoria (o perfil é dela, não do casal).
+function dropOrphanUser(uid) {
+  if (S('SELECT 1 FROM memberships WHERE user_id = ?').get(uid)) return false;
+  return S("DELETE FROM users WHERE id = ? AND kind <> 'planner'").run(uid).changes > 0;
+}
+
+// Convites por link: os noivos geram um link (vale 7 dias, uso único) e mandam como quiserem (WhatsApp…).
+// Quem abre cria a própria conta ou entra na que já tem. Não depende de envio de e-mail e os noivos
+// nunca definem a senha de ninguém. O banco guarda só o hash do token.
+function findInvite(token) {
+  if (typeof token !== 'string' || token.length < 20 || token.length > 100) return null;
+  const inv = S(`SELECT i.*, w.name AS ws_name, w.settings FROM invites i JOIN workspaces w ON w.id = i.workspace_id
+                 WHERE i.token_hash = ?`).get(sha256(token));
+  return inv && !inv.used_at && inv.expires_at > Date.now() ? inv : null;
+}
+const INVALID_INVITE = 'Este convite é inválido, já foi usado ou expirou. Peça um novo link aos noivos.';
+
+// Confere e-mail e senha (com bloqueio por tentativas). Usado no login e ao aceitar convite com conta existente.
+async function checkCredentials(req, login, password) {
+  const rl = rateBucket(`login:${clientIp(req)}`);
+  login = String(login || '').trim();
+  password = String(password || '');
+  if (!login || !password || password.length > 256) throw new HttpError(400, 'Informe e-mail e senha.');
+  const user = S('SELECT * FROM users WHERE email = ? COLLATE NOCASE OR username = ? ORDER BY (email IS NOT NULL) DESC LIMIT 1').get(login, login);
+  const now = Date.now();
+  if (user && user.locked_until > now) {
+    throw new HttpError(429, `Acesso bloqueado temporariamente por excesso de tentativas. Tente em ${Math.ceil((user.locked_until - now) / MIN)} min.`);
+  }
+  const valid = await verifyPassword(password, user ? user.pass_hash : DUMMY_HASH);
+  if (!user || !valid) {
+    rl.n++;
+    if (user) {
+      const failed = user.failed + 1;
+      const lock = failed >= LOCK_AFTER;
+      S('UPDATE users SET failed = ?, locked_until = ? WHERE id = ?').run(lock ? 0 : failed, lock ? now + LOCK_TIME : 0, user.id);
+    }
+    await sleep(250 + crypto.randomInt(250));
+    throw new HttpError(401, 'E-mail ou senha incorretos.');
+  }
+  S('UPDATE users SET failed = 0, locked_until = 0 WHERE id = ?').run(user.id);
+  return user;
+}
+
 function deleteWorkspace(ws) {
   const fileIds = S('SELECT id FROM files WHERE workspace_id = ?').all(ws).map((f) => f.id);
   tx(() => {
@@ -352,7 +404,7 @@ function deleteWorkspace(ws) {
     S('DELETE FROM sessions WHERE workspace_id = ?').run(ws);
     S('DELETE FROM workspaces WHERE id = ?').run(ws); // memberships saem em cascata
     for (const uid of members) {
-      if (!S('SELECT 1 FROM memberships WHERE user_id = ?').get(uid)) S('DELETE FROM users WHERE id = ?').run(uid);
+      dropOrphanUser(uid);
     }
   });
   for (const id of fileIds) fs.rmSync(path.join(UPLOAD_DIR, id), { force: true });
@@ -365,7 +417,9 @@ const routes = [];
 function route(method, pattern, handler, opts = {}) {
   const keys = [];
   const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '([^/]+)'; }) + '$');
-  routes.push({ method, re, keys, handler, auth: opts.auth !== false, write: !!opts.write, owner: !!opts.owner, manage: !!opts.manage });
+  const auth = opts.auth !== false;
+  // ws: a rota precisa de um casamento aberto (a assessoria pode estar conectada sem nenhum).
+  routes.push({ method, re, keys, handler, auth, ws: auth && opts.ws !== false, write: !!opts.write, owner: !!opts.owner, manage: !!opts.manage });
 }
 
 route('GET', '/api/status', ({ res }) => {
@@ -410,6 +464,17 @@ route('POST', '/api/signup', async ({ req, res }) => {
   const u = validateNewUser(b);
   if (emailTaken(u.email)) throw new HttpError(409, 'Já existe uma conta com esse e-mail. Faça login ou recupere a senha.');
   const hash = await hashPassword(u.password);
+  // Perfil de assessoria: só a conta, sem casamento próprio. Os casamentos chegam quando os noivos dão acesso.
+  if (b.kind === 'planner') {
+    const userId = tx(() => {
+      if (emailTaken(u.email)) throw new HttpError(409, 'Já existe uma conta com esse e-mail.');
+      const now = Date.now();
+      return Number(S("INSERT INTO users (username, email, name, pass_hash, kind, terms_accepted_at, created_at) VALUES (?,?,?,?,'planner',?,?)")
+        .run(u.email, u.email, u.name, hash, now, now).lastInsertRowid);
+    });
+    createSession(req, res, userId, true, null);
+    return send(res, 201, { ok: true });
+  }
   const acc = tx(() => {
     if (emailTaken(u.email)) throw new HttpError(409, 'Já existe uma conta com esse e-mail.');
     return createAccount({ ...b, ...u, hash, plan: 'trial' });
@@ -419,30 +484,10 @@ route('POST', '/api/signup', async ({ req, res }) => {
 }, { auth: false });
 
 route('POST', '/api/login', async ({ req, res }) => {
-  const rl = rateBucket(`login:${clientIp(req)}`);
   const b = await readJson(req);
-  const login = String(b.username || b.email || '').trim();
-  const password = String(b.password || '');
-  if (!login || !password || password.length > 256) throw new HttpError(400, 'Informe e-mail e senha.');
-  const user = S('SELECT * FROM users WHERE email = ? COLLATE NOCASE OR username = ? ORDER BY (email IS NOT NULL) DESC LIMIT 1').get(login, login);
-  const now = Date.now();
-  if (user && user.locked_until > now) {
-    throw new HttpError(429, `Acesso bloqueado temporariamente por excesso de tentativas. Tente em ${Math.ceil((user.locked_until - now) / MIN)} min.`);
-  }
-  const valid = await verifyPassword(password, user ? user.pass_hash : DUMMY_HASH);
-  if (!user || !valid) {
-    rl.n++;
-    if (user) {
-      const failed = user.failed + 1;
-      const lock = failed >= LOCK_AFTER;
-      S('UPDATE users SET failed = ?, locked_until = ? WHERE id = ?').run(lock ? 0 : failed, lock ? now + LOCK_TIME : 0, user.id);
-    }
-    await sleep(250 + crypto.randomInt(250));
-    throw new HttpError(401, 'E-mail ou senha incorretos.');
-  }
+  const user = await checkCredentials(req, b.username || b.email, b.password);
   const ws = defaultWorkspace(user.id);
-  if (!ws) throw new HttpError(403, 'Sua conta não está ligada a nenhum casamento. Fale com quem convidou você.');
-  S('UPDATE users SET failed = 0, locked_until = 0 WHERE id = ?').run(user.id);
+  if (!ws && user.kind !== 'planner') throw new HttpError(403, 'Sua conta não está ligada a nenhum casamento. Peça um link de convite aos noivos.');
   createSession(req, res, user.id, !!b.remember, ws);
   send(res, 200, { ok: true });
 }, { auth: false });
@@ -496,18 +541,18 @@ route('POST', '/api/password/reset', async ({ req, res }) => {
 route('POST', '/api/logout', ({ req, res, session }) => {
   S('DELETE FROM sessions WHERE token_hash = ?').run(session.tokenHash);
   send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
-});
+}, { ws: false });
 
 route('GET', '/api/me', ({ req, res, session }) => {
   const headers = {};
   if (session.persistent) headers['Set-Cookie'] = sessionCookie(req, session.token, Math.floor(session.ttl / 1000));
   send(res, 200, {
-    user: { id: session.user_id, name: session.name, username: session.username, email: session.email },
+    user: { id: session.user_id, name: session.name, username: session.username, email: session.email, kind: session.kind },
     csrf: session.csrf,
-    workspace: workspaceInfo(session),
+    workspace: session.workspace_id ? workspaceInfo(session) : null,
     workspaceCount: S('SELECT COUNT(*) AS n FROM memberships WHERE user_id = ?').get(session.user_id).n,
   }, headers);
-});
+}, { ws: false });
 
 route('PUT', '/api/me', async ({ req, res, session }) => {
   const b = await readJson(req);
@@ -521,7 +566,18 @@ route('PUT', '/api/me', async ({ req, res, session }) => {
   }
   S('UPDATE users SET name = ?, email = ? WHERE id = ?').run(name, email, session.user_id);
   send(res, 200, { ok: true, name, email });
-});
+}, { ws: false });
+
+// Excluir a própria conta (LGPD): assessoria e convidados. Quem criou um casamento exclui pelo casamento.
+route('DELETE', '/api/me', async ({ req, res, session }) => {
+  const b = await readJson(req);
+  const user = S('SELECT pass_hash FROM users WHERE id = ?').get(session.user_id);
+  if (!(await verifyPassword(String(b.password || ''), user.pass_hash))) throw new HttpError(400, 'Senha incorreta.');
+  const own = S("SELECT w.name FROM memberships m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ? AND m.role = 'owner' LIMIT 1").get(session.user_id);
+  if (own) throw new HttpError(400, `Você criou o casamento "${own.name}". Para apagar tudo, abra esse casamento e use "Excluir conta e todos os dados" em Configurações.`);
+  S('DELETE FROM users WHERE id = ?').run(session.user_id); // acessos, sessões e links saem em cascata
+  send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
+}, { ws: false });
 
 route('POST', '/api/password', async ({ req, res, session }) => {
   const b = await readJson(req);
@@ -532,7 +588,7 @@ route('POST', '/api/password', async ({ req, res, session }) => {
   S('UPDATE users SET pass_hash = ? WHERE id = ?').run(hash, user.id);
   S('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').run(user.id, session.tokenHash);
   send(res, 200, { ok: true });
-});
+}, { ws: false });
 
 // Pessoas com acesso ao casamento
 route('GET', '/api/users', ({ res, session }) => {
@@ -544,36 +600,85 @@ route('GET', '/api/users', ({ res, session }) => {
   })));
 });
 
-// Noivos adicionam pessoas: o par, a assessoria ou família/amigos.
-// Se o e-mail já tem conta (ex.: assessora que atende outros casais), ela só ganha acesso a este casamento.
-route('POST', '/api/users', async ({ req, res, session }) => {
+// Noivos convidam pessoas (o par, a assessoria ou família/amigos) gerando um link de convite.
+route('POST', '/api/invites', async ({ req, res, session }) => {
+  const b = await readJson(req);
+  const role = ['couple', 'planner', 'member'].includes(b.role) ? b.role : 'member';
+  const label = String(b.name || '').trim().slice(0, 60);
   const ws = session.workspace_id;
   const n = S('SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ?').get(ws).n;
   if (n >= MAX_MEMBERS) throw new HttpError(400, `Limite de ${MAX_MEMBERS} pessoas por casamento atingido.`);
-  const b = await readJson(req);
-  const role = ['couple', 'planner', 'member'].includes(b.role) ? b.role : 'member';
-  const email = normEmail(b.email);
-  if (!isEmail(email)) throw new HttpError(400, 'Informe um e-mail válido.');
+  const open = S('SELECT COUNT(*) AS n FROM invites WHERE workspace_id = ? AND used_at IS NULL AND expires_at > ?').get(ws, Date.now()).n;
+  if (open >= 20) throw new HttpError(400, 'Há convites demais em aberto. Cancele os que não serão usados.');
+  const token = crypto.randomBytes(32).toString('base64url');
   const now = Date.now();
-  const existing = S('SELECT id, name FROM users WHERE email = ? COLLATE NOCASE OR username = ? LIMIT 1').get(email, email);
-  if (existing) {
-    if (S('SELECT 1 FROM memberships WHERE user_id = ? AND workspace_id = ?').get(existing.id, ws)) {
-      throw new HttpError(409, 'Essa pessoa já tem acesso a este casamento.');
-    }
-    S('INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, ?, ?, ?)').run(existing.id, ws, role, now);
-    return send(res, 201, { id: existing.id, name: existing.name, email, role, linked: true });
-  }
-  if (!b.password) throw new HttpError(400, 'Essa pessoa ainda não tem conta: defina uma senha inicial para ela.');
-  const u = validateNewUser(b);
-  const hash = await hashPassword(u.password);
-  const id = tx(() => {
-    const r = S('INSERT INTO users (username, email, name, pass_hash, created_at) VALUES (?,?,?,?,?)').run(u.email, u.email, u.name, hash, now);
-    const uid = Number(r.lastInsertRowid);
-    S('INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, ?, ?, ?)').run(uid, ws, role, now);
-    return uid;
-  });
-  send(res, 201, { id, name: u.name, email: u.email, role, linked: false });
+  S('INSERT INTO invites (token_hash, workspace_id, role, label, created_by, created_at, expires_at) VALUES (?,?,?,?,?,?,?)')
+    .run(sha256(token), ws, role, label, session.user_id, now, now + INVITE_TTL);
+  send(res, 201, { url: `${appUrl(req)}/#/convite?token=${token}`, role, name: label, expiresAt: now + INVITE_TTL });
 }, { manage: true, write: true });
+
+route('GET', '/api/invites', ({ res, session }) => {
+  const rows = S(`SELECT id, role, label, created_at, expires_at FROM invites
+                  WHERE workspace_id = ? AND used_at IS NULL AND expires_at > ? ORDER BY created_at`).all(session.workspace_id, Date.now());
+  send(res, 200, rows.map((r) => ({ id: r.id, role: r.role, name: r.label, createdAt: r.created_at, expiresAt: r.expires_at })));
+}, { manage: true });
+
+route('DELETE', '/api/invites/:id', ({ res, params, session }) => {
+  S('DELETE FROM invites WHERE id = ? AND workspace_id = ?').run(Number(params.id), session.workspace_id);
+  send(res, 200, { ok: true });
+}, { manage: true });
+
+// Tela do convite (antes de entrar): de qual casamento é e com que tipo de acesso.
+route('GET', '/api/invites/info', ({ req, res, url }) => {
+  const rl = rateBucket(`inviteinfo:${clientIp(req)}`, 30);
+  const inv = findInvite(url.searchParams.get('token'));
+  if (!inv) { rl.n++; throw new HttpError(404, INVALID_INVITE); }
+  const st = JSON.parse(inv.settings);
+  send(res, 200, { wedding: inv.ws_name, date: st.date || '', role: inv.role, name: inv.label });
+}, { auth: false });
+
+// Aceitar o convite: com a sessão atual, entrando com uma conta existente ou criando uma conta nova.
+route('POST', '/api/invites/accept', async ({ req, res }) => {
+  const rl = rateBucket(`invite:${clientIp(req)}`, 20);
+  const b = await readJson(req);
+  const inv = findInvite(b.token);
+  if (!inv) { rl.n++; throw new HttpError(404, INVALID_INVITE); }
+  const session = getSession(req);
+  let userId = null, newUser = null;
+  if (session && !b.mode) {
+    if (!safeEqual(String(req.headers['x-csrf-token'] || ''), session.csrf)) throw new HttpError(403, 'Token de segurança inválido. Recarregue a página.');
+    userId = session.user_id;
+  } else if (b.mode === 'login') {
+    userId = (await checkCredentials(req, b.email, b.password)).id;
+  } else {
+    if (b.acceptTerms !== true) throw new HttpError(400, 'É preciso aceitar os Termos de Uso e a Política de Privacidade.');
+    const u = validateNewUser(b);
+    if (emailTaken(u.email)) throw new HttpError(409, 'Já existe uma conta com esse e-mail. Use "Já tenho conta" para entrar com ela.');
+    newUser = { ...u, hash: await hashPassword(u.password) };
+  }
+  // Conta nova, acesso e uso do convite numa transação só: se algo falhar, nada fica pela metade.
+  tx(() => {
+    if (newUser) {
+      if (emailTaken(newUser.email)) throw new HttpError(409, 'Já existe uma conta com esse e-mail.');
+      const now = Date.now();
+      userId = Number(S('INSERT INTO users (username, email, name, pass_hash, kind, terms_accepted_at, created_at) VALUES (?,?,?,?,?,?,?)')
+        .run(newUser.email, newUser.email, newUser.name, newUser.hash, inv.role === 'planner' ? 'planner' : 'couple', now, now).lastInsertRowid);
+    }
+    // Uso único: marca como usado na mesma transação (dois cliques no mesmo link não viram dois acessos).
+    const used = S('UPDATE invites SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL').run(Date.now(), userId, inv.id);
+    if (!used.changes) throw new HttpError(404, INVALID_INVITE);
+    if (!S('SELECT 1 FROM memberships WHERE user_id = ? AND workspace_id = ?').get(userId, inv.workspace_id)) {
+      const n = S('SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ?').get(inv.workspace_id).n;
+      if (n >= MAX_MEMBERS) throw new HttpError(400, `Este casamento já tem o limite de ${MAX_MEMBERS} pessoas. Fale com os noivos.`);
+      S('INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, ?, ?, ?)').run(userId, inv.workspace_id, inv.role, Date.now());
+    }
+    if (inv.role === 'planner') S("UPDATE users SET kind = 'planner' WHERE id = ?").run(userId);
+    S('UPDATE users SET last_workspace_id = ? WHERE id = ?').run(inv.workspace_id, userId);
+  });
+  if (session && !b.mode) S('UPDATE sessions SET workspace_id = ? WHERE token_hash = ?').run(inv.workspace_id, session.tokenHash);
+  else createSession(req, res, userId, true, inv.workspace_id);
+  send(res, newUser ? 201 : 200, { ok: true, wedding: inv.ws_name });
+}, { auth: false });
 
 // Noivos mudam o tipo de acesso de alguém (ex.: marcar o par como noivo(a)).
 route('PUT', '/api/users/:id', async ({ req, res, params, session }) => {
@@ -584,7 +689,10 @@ route('PUT', '/api/users/:id', async ({ req, res, params, session }) => {
   const m = S('SELECT role FROM memberships WHERE user_id = ? AND workspace_id = ?').get(id, session.workspace_id);
   if (!m) throw new HttpError(404, 'Pessoa não encontrada neste casamento.');
   if (m.role === 'owner') throw new HttpError(403, 'Não é possível mudar o acesso de quem criou o casamento.');
-  S('UPDATE memberships SET role = ? WHERE user_id = ? AND workspace_id = ?').run(role, id, session.workspace_id);
+  tx(() => {
+    S('UPDATE memberships SET role = ? WHERE user_id = ? AND workspace_id = ?').run(role, id, session.workspace_id);
+    if (role === 'planner') S("UPDATE users SET kind = 'planner' WHERE id = ?").run(id);
+  });
   send(res, 200, { ok: true, role });
 }, { manage: true });
 
@@ -596,8 +704,9 @@ route('DELETE', '/api/users/:id', ({ res, params, session }) => {
     if (!m) throw new HttpError(404, 'Pessoa não encontrada neste casamento.');
     if (m.role === 'owner') throw new HttpError(403, 'Não é possível remover quem criou o casamento.');
     S('DELETE FROM memberships WHERE user_id = ? AND workspace_id = ?').run(id, session.workspace_id);
-    S('DELETE FROM sessions WHERE user_id = ? AND workspace_id = ?').run(id, session.workspace_id);
-    if (!S('SELECT 1 FROM memberships WHERE user_id = ?').get(id)) S('DELETE FROM users WHERE id = ?').run(id);
+    // As sessões abertas nesse casamento passam para outro casamento da pessoa (ver getSession);
+    // sem nenhum, a assessoria fica no perfil e as demais contas são apagadas (sessões em cascata).
+    dropOrphanUser(id);
   });
   send(res, 200, { ok: true });
 }, { manage: true });
@@ -611,7 +720,7 @@ route('GET', '/api/workspaces', ({ res, session }) => {
     const s = JSON.parse(w.settings);
     return { id: w.id, name: w.name, role: w.role, date: s.date || '', place: s.receptionPlace || s.ceremonyPlace || '', access: workspaceAccess(w), current: w.id === session.workspace_id };
   }).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999')));
-});
+}, { ws: false });
 
 route('POST', '/api/workspaces/switch', async ({ req, res, session }) => {
   const id = String((await readJson(req)).id || '');
@@ -621,22 +730,22 @@ route('POST', '/api/workspaces/switch', async ({ req, res, session }) => {
   S('UPDATE sessions SET workspace_id = ? WHERE token_hash = ?').run(id, session.tokenHash);
   S('UPDATE users SET last_workspace_id = ? WHERE id = ?').run(id, session.user_id);
   send(res, 200, { ok: true });
-});
+}, { ws: false });
 
 // Quem não é dono(a) pode sair de um casamento (ex.: a assessoria ao fim do contrato).
 route('POST', '/api/workspaces/leave', ({ req, res, session }) => {
   if (session.role === 'owner') throw new HttpError(400, 'Quem criou o casamento não pode sair dele; é possível excluir a conta.');
   const uid = session.user_id;
-  let next = null;
+  let next = null, deleted = false;
   tx(() => {
     S('DELETE FROM memberships WHERE user_id = ? AND workspace_id = ?').run(uid, session.workspace_id);
     S('DELETE FROM sessions WHERE user_id = ? AND workspace_id = ?').run(uid, session.workspace_id);
     next = defaultWorkspace(uid);
-    if (!next) S('DELETE FROM users WHERE id = ?').run(uid);
+    if (!next) deleted = dropOrphanUser(uid); // a assessoria continua com o perfil, mesmo sem casamentos
   });
-  if (next) {
+  if (!deleted) {
     createSession(req, res, uid, !!session.persistent, next);
-    return send(res, 200, { ok: true, switched: true });
+    return send(res, 200, { ok: true, switched: !!next });
   }
   send(res, 200, { ok: true, accountDeleted: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
 });
@@ -645,12 +754,12 @@ route('GET', '/api/sessions', ({ res, session }) => {
   const rows = S('SELECT token_hash, created_at, last_seen, ip, ua FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY last_seen DESC')
     .all(session.user_id, Date.now());
   send(res, 200, rows.map((r) => ({ createdAt: r.created_at, lastSeen: r.last_seen, ip: r.ip, ua: r.ua, current: r.token_hash === session.tokenHash })));
-});
+}, { ws: false });
 
 route('POST', '/api/sessions/revoke-others', ({ res, session }) => {
   const r = S('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').run(session.user_id, session.tokenHash);
   send(res, 200, { ok: true, removed: Number(r.changes) });
-});
+}, { ws: false });
 
 // Dados do casamento
 route('GET', '/api/data', ({ res, session }) => {
@@ -876,6 +985,13 @@ async function handleApi(req, res, url) {
     if (mutating && !safeEqual(String(req.headers['x-csrf-token'] || ''), session.csrf)) {
       throw new HttpError(403, 'Token de segurança inválido. Recarregue a página.');
     }
+    if (r.ws && !session.workspace_id) throw new HttpError(409, 'Nenhum casamento aberto. Escolha um em "Meus casamentos".', 'workspace_changed');
+    // A sessão é uma só para todas as abas. Se outra aba trocou de casamento (ou o acesso foi removido),
+    // esta tela ainda mostra o anterior: recusa para nada ser lido ou gravado no casamento errado.
+    const shown = req.headers['x-workspace'];
+    if (r.ws && shown && shown !== session.workspace_id) {
+      throw new HttpError(409, 'O casamento aberto mudou em outra aba. Recarregando…', 'workspace_changed');
+    }
     if (r.owner && session.role !== 'owner') throw new HttpError(403, 'Só quem criou o casamento no planejador pode fazer isso.');
     if (r.manage && !MANAGER_ROLES.has(session.role)) throw new HttpError(403, 'Só os noivos podem gerenciar quem tem acesso.');
     if (r.write && session.access !== 'full') {
@@ -914,7 +1030,7 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     const status = e instanceof HttpError ? e.status : (e instanceof URIError ? 400 : 500);
     if (status === 500) console.error(e);
-    if (!res.headersSent) send(res, status, { error: status === 500 ? 'Erro interno do servidor.' : e.message });
+    if (!res.headersSent) send(res, status, { error: status === 500 ? 'Erro interno do servidor.' : e.message, code: e.code });
     else res.destroy();
   }
 });
@@ -923,6 +1039,7 @@ const server = http.createServer(async (req, res) => {
 setInterval(() => {
   const now = Date.now();
   S('DELETE FROM sessions WHERE expires_at <= ?').run(now);
+  S('DELETE FROM invites WHERE expires_at <= ?').run(now - 30 * DAY);
   S('DELETE FROM password_resets WHERE expires_at <= ?').run(now);
   for (const [k, a] of attempts) if (a.reset < now) attempts.delete(k);
   for (const f of fs.readdirSync(TMP_DIR)) {

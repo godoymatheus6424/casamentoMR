@@ -4,8 +4,8 @@
   "description": "Planejador de casamento para noivos e assessoras",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f8f5f0",
-  "theme_color": "#a8646f",
+  "background_color": "#161e19",
+  "theme_color": "#161e19",
   "lang": "pt-BR",
   "icons": [
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
