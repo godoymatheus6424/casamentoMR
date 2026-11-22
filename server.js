@@ -25,6 +25,9 @@ const TMP_DIR = path.join(DATA_DIR, 'tmp');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const SIGNUP_OPEN = process.env.SIGNUP_OPEN === '1';
+// Temporário (fase de testes): o mesmo e-mail pode ter várias contas. UNIQUE_EMAIL=1 volta a exigir e-mail único
+// para contas novas. No login com e-mail repetido, entra a conta cuja senha confere (a mais recente primeiro).
+const UNIQUE_EMAIL = process.env.UNIQUE_EMAIL === '1';
 const APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 25;
 const MAX_UPLOAD = MAX_UPLOAD_MB * 1024 * 1024;
@@ -190,7 +193,13 @@ function validateNewUser(b) {
   validatePassword(password);
   return { name, email, password };
 }
+// "username" é único no banco: com e-mail repetido, as contas novas ganham um sufixo interno (o login continua pelo e-mail).
+function uniqueUsername(email) {
+  if (!S('SELECT 1 FROM users WHERE username = ?').get(email)) return email;
+  return `${email}#${crypto.randomBytes(4).toString('hex')}`;
+}
 function emailTaken(email, exceptUserId = 0) {
+  if (!UNIQUE_EMAIL) return false;
   return !!S('SELECT 1 FROM users WHERE (email = ? COLLATE NOCASE OR username = ?) AND id <> ?').get(email, email, exceptUserId);
 }
 
@@ -336,7 +345,7 @@ function exportWorkspace(ws) {
 function createAccount({ name, email, hash, partner1, partner2, date, plan }) {
   const now = Date.now();
   const r = S('INSERT INTO users (username, email, name, pass_hash, terms_accepted_at, created_at) VALUES (?,?,?,?,?,?)')
-    .run(email, email, name, hash, now, now);
+    .run(uniqueUsername(email), email, name, hash, now, now);
   const userId = Number(r.lastInsertRowid);
   const settings = {
     partner1: String(partner1 || '').trim().slice(0, 60),
@@ -375,12 +384,19 @@ async function checkCredentials(req, login, password) {
   login = String(login || '').trim();
   password = String(password || '');
   if (!login || !password || password.length > 256) throw new HttpError(400, 'Informe e-mail e senha.');
-  const user = S('SELECT * FROM users WHERE email = ? COLLATE NOCASE OR username = ? ORDER BY (email IS NOT NULL) DESC LIMIT 1').get(login, login);
+  // Com e-mail repetido (fase de testes), testa a senha em cada conta, da mais recente para a mais antiga.
   const now = Date.now();
-  if (user && user.locked_until > now) {
-    throw new HttpError(429, `Acesso bloqueado temporariamente por excesso de tentativas. Tente em ${Math.ceil((user.locked_until - now) / MIN)} min.`);
+  const all = S('SELECT * FROM users WHERE email = ? COLLATE NOCASE OR username = ? ORDER BY (email IS NOT NULL) DESC, id DESC LIMIT 10').all(login, login);
+  const open = all.filter((u) => !(u.locked_until > now));
+  if (all.length && !open.length) {
+    const until = Math.min(...all.map((u) => u.locked_until));
+    throw new HttpError(429, `Acesso bloqueado temporariamente por excesso de tentativas. Tente em ${Math.ceil((until - now) / MIN)} min.`);
   }
-  const valid = await verifyPassword(password, user ? user.pass_hash : DUMMY_HASH);
+  let user = open[0] || null, valid = false;
+  if (!open.length) await verifyPassword(password, DUMMY_HASH);
+  for (const u of open) {
+    if (await verifyPassword(password, u.pass_hash)) { user = u; valid = true; break; }
+  }
   if (!user || !valid) {
     rl.n++;
     if (user) {
@@ -470,7 +486,7 @@ route('POST', '/api/signup', async ({ req, res }) => {
       if (emailTaken(u.email)) throw new HttpError(409, 'Já existe uma conta com esse e-mail.');
       const now = Date.now();
       return Number(S("INSERT INTO users (username, email, name, pass_hash, kind, terms_accepted_at, created_at) VALUES (?,?,?,?,'planner',?,?)")
-        .run(u.email, u.email, u.name, hash, now, now).lastInsertRowid);
+        .run(uniqueUsername(u.email), u.email, u.name, hash, now, now).lastInsertRowid);
     });
     createSession(req, res, userId, true, null);
     return send(res, 201, { ok: true });
@@ -496,7 +512,7 @@ route('POST', '/api/password/forgot', async ({ req, res }) => {
   const rl = rateBucket(`forgot:${clientIp(req)}`, 5);
   rl.n++;
   const email = normEmail((await readJson(req)).email);
-  const user = isEmail(email) ? S('SELECT id, name, email FROM users WHERE email = ? COLLATE NOCASE').get(email) : null;
+  const user = isEmail(email) ? S('SELECT id, name, email FROM users WHERE email = ? COLLATE NOCASE ORDER BY id DESC').get(email) : null;
   if (user) {
     const token = crypto.randomBytes(32).toString('base64url');
     const now = Date.now();
@@ -662,7 +678,7 @@ route('POST', '/api/invites/accept', async ({ req, res }) => {
       if (emailTaken(newUser.email)) throw new HttpError(409, 'Já existe uma conta com esse e-mail.');
       const now = Date.now();
       userId = Number(S('INSERT INTO users (username, email, name, pass_hash, kind, terms_accepted_at, created_at) VALUES (?,?,?,?,?,?,?)')
-        .run(newUser.email, newUser.email, newUser.name, newUser.hash, inv.role === 'planner' ? 'planner' : 'couple', now, now).lastInsertRowid);
+        .run(uniqueUsername(newUser.email), newUser.email, newUser.name, newUser.hash, inv.role === 'planner' ? 'planner' : 'couple', now, now).lastInsertRowid);
     }
     // Uso único: marca como usado na mesma transação (dois cliques no mesmo link não viram dois acessos).
     const used = S('UPDATE invites SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL').run(Date.now(), userId, inv.id);
