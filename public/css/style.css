@@ -1017,3 +1017,13 @@ a.auth-back:hover { color: var(--bx-gold); }
   .card, .tl-body, .stat { box-shadow: none; break-inside: avoid; }
   .page-head .sub { display: none; }
 }
+
+/* Assessoria: telas só de consulta */
+.ro-note { display: flex; gap: 8px; align-items: center; margin: -4px 0 14px; padding: 8px 12px; border: 1px solid var(--line); border-left: 2px solid var(--accent); border-radius: var(--radius-sm); background: var(--surface); color: var(--muted); font-size: 13px; }
+.ro-note .ic { width: 16px; height: 16px; flex: none; color: var(--accent); }
+.tag-btn.is-static, .tag-btn.is-static:hover { cursor: default; border-color: var(--line); color: var(--ink-2); background: transparent; }
+.tl-item.is-static { cursor: default; }
+.ro-contacts { margin: 6px 0 4px; }
+.hero .badge { margin-top: 10px; }
+@media print { .ro-note { display: none; } }
+.tl-item.is-static:hover .tl-body { border-color: var(--line); }

@@ -48,6 +48,10 @@ const LOCK_TIME = 15 * MIN;
 
 const COLLECTIONS = new Set(['vendors', 'payments', 'budget', 'tasks', 'guests', 'tables', 'timeline', 'gifts', 'notes']);
 const FILE_CATEGORIES = new Set(['contrato', 'orcamento', 'comprovante', 'inspiracao', 'documento', 'outros']);
+// Assessoria: só consulta. Vê fornecedores (com contatos), contratos e documentos, convidados, mesas e cronograma.
+// Nada financeiro (orçamento, pagamentos, valores, comprovantes) e nada pessoal dos noivos (tarefas, anotações, presentes).
+const PLANNER_FILE_CATS = new Set(['contrato', 'documento', 'inspiracao', 'outros']);
+const PLANNER_READONLY = 'O acesso da assessoria é só para consulta. Para mudar algo, fale com os noivos.';
 const FILE_TYPES = {
   pdf: 'application/pdf',
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',
@@ -341,6 +345,20 @@ function exportWorkspace(ws) {
   return { items, files: S('SELECT * FROM files WHERE workspace_id = ? ORDER BY created_at DESC').all(ws).map(fileToJson) };
 }
 
+// O que a assessoria recebe do casamento (ver PLANNER_FILE_CATS).
+function plannerData(items, files, settings) {
+  const out = {};
+  for (const c of COLLECTIONS) out[c] = [];
+  out.vendors = items.vendors.map(({ price, ...v }) => v);
+  out.guests = items.guests;
+  out.tables = items.tables;
+  out.timeline = items.timeline;
+  // Só os nomes das categorias, para mostrar o que ainda falta contratar.
+  out.budget = items.budget.map((b) => ({ id: b.id, name: b.name, order: b.order, skip: b.skip }));
+  const { budgetTotal, ...st } = settings;
+  return { items: out, files: files.filter((f) => PLANNER_FILE_CATS.has(f.category)), settings: st };
+}
+
 // Cria usuário + espaço do casal + modelos iniciais. Chamar dentro de tx().
 function createAccount({ name, email, hash, partner1, partner2, date, plan }) {
   const now = Date.now();
@@ -379,7 +397,12 @@ function findInvite(token) {
 const INVALID_INVITE = 'Este convite é inválido, já foi usado ou expirou. Peça um novo link aos noivos.';
 
 // Confere e-mail e senha (com bloqueio por tentativas). Usado no login e ao aceitar convite com conta existente.
-async function checkCredentials(req, login, password) {
+// kind ('couple' | 'planner'): só aceita contas desse tipo; os dois perfis são independentes.
+const KIND_HINT = {
+  couple: 'Este e-mail e senha são de um perfil de assessoria. Use a opção "Assessoria" para entrar.',
+  planner: 'Este e-mail e senha são de uma conta de noivos. O perfil de assessoria é separado: crie um, se ainda não tiver.',
+};
+async function checkCredentials(req, login, password, kind = null) {
   const rl = rateBucket(`login:${clientIp(req)}`);
   login = String(login || '').trim();
   password = String(password || '');
@@ -392,10 +415,15 @@ async function checkCredentials(req, login, password) {
     const until = Math.min(...all.map((u) => u.locked_until));
     throw new HttpError(429, `Acesso bloqueado temporariamente por excesso de tentativas. Tente em ${Math.ceil((until - now) / MIN)} min.`);
   }
-  let user = open[0] || null, valid = false;
+  const ofKind = kind ? open.filter((u) => u.kind === kind) : open;
+  let user = ofKind[0] || null, valid = false, otherKind = false;
   if (!open.length) await verifyPassword(password, DUMMY_HASH);
-  for (const u of open) {
+  for (const u of ofKind) {
     if (await verifyPassword(password, u.pass_hash)) { user = u; valid = true; break; }
+  }
+  if (!valid && kind) {
+    for (const u of open) if (u.kind !== kind && await verifyPassword(password, u.pass_hash)) { otherKind = true; break; }
+    if (otherKind) throw new HttpError(403, KIND_HINT[kind], 'wrong_kind');
   }
   if (!user || !valid) {
     rl.n++;
@@ -435,7 +463,7 @@ function route(method, pattern, handler, opts = {}) {
   const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '([^/]+)'; }) + '$');
   const auth = opts.auth !== false;
   // ws: a rota precisa de um casamento aberto (a assessoria pode estar conectada sem nenhum).
-  routes.push({ method, re, keys, handler, auth, ws: auth && opts.ws !== false, write: !!opts.write, owner: !!opts.owner, manage: !!opts.manage });
+  routes.push({ method, re, keys, handler, auth, ws: auth && opts.ws !== false, write: !!opts.write, team: !!opts.team, owner: !!opts.owner, manage: !!opts.manage });
 }
 
 route('GET', '/api/status', ({ res }) => {
@@ -501,7 +529,8 @@ route('POST', '/api/signup', async ({ req, res }) => {
 
 route('POST', '/api/login', async ({ req, res }) => {
   const b = await readJson(req);
-  const user = await checkCredentials(req, b.username || b.email, b.password);
+  const kind = ['couple', 'planner'].includes(b.kind) ? b.kind : null;
+  const user = await checkCredentials(req, b.username || b.email, b.password, kind);
   const ws = defaultWorkspace(user.id);
   if (!ws && user.kind !== 'planner') throw new HttpError(403, 'Sua conta não está ligada a nenhum casamento. Peça um link de convite aos noivos.');
   createSession(req, res, user.id, !!b.remember, ws);
@@ -660,17 +689,32 @@ route('POST', '/api/invites/accept', async ({ req, res }) => {
   const inv = findInvite(b.token);
   if (!inv) { rl.n++; throw new HttpError(404, INVALID_INVITE); }
   const session = getSession(req);
+  // Convite de assessoria só entra num perfil de assessoria. Convite de noivos/família cria uma conta nova:
+  // conta de noivos pertence a um casamento só.
+  const kind = inv.role === 'planner' ? 'planner' : 'couple';
   let userId = null, newUser = null;
   if (session && !b.mode) {
     if (!safeEqual(String(req.headers['x-csrf-token'] || ''), session.csrf)) throw new HttpError(403, 'Token de segurança inválido. Recarregue a página.');
     userId = session.user_id;
   } else if (b.mode === 'login') {
-    userId = (await checkCredentials(req, b.email, b.password)).id;
+    if (kind !== 'planner') throw new HttpError(400, 'Este convite cria uma conta nova para este casamento. Use "Criar conta".');
+    userId = (await checkCredentials(req, b.email, b.password, 'planner')).id;
   } else {
     if (b.acceptTerms !== true) throw new HttpError(400, 'É preciso aceitar os Termos de Uso e a Política de Privacidade.');
     const u = validateNewUser(b);
     if (emailTaken(u.email)) throw new HttpError(409, 'Já existe uma conta com esse e-mail. Use "Já tenho conta" para entrar com ela.');
     newUser = { ...u, hash: await hashPassword(u.password) };
+  }
+  if (userId) {
+    const u = S('SELECT kind FROM users WHERE id = ?').get(userId);
+    if (kind === 'planner' && u.kind !== 'planner') {
+      throw new HttpError(409, 'Este convite é para um perfil de assessoria e você está numa conta de noivos. Saia e entre (ou crie) o seu perfil de assessoria.', 'wrong_kind');
+    }
+    if (kind === 'couple') {
+      throw new HttpError(409, u.kind === 'planner'
+        ? 'Este convite é para noivos ou família, e você está no perfil de assessoria. Saia e crie uma conta para este casamento.'
+        : 'Sua conta já pertence a um casamento. Para este convite, saia e crie uma conta nova.', 'wrong_kind');
+    }
   }
   // Conta nova, acesso e uso do convite numa transação só: se algo falhar, nada fica pela metade.
   tx(() => {
@@ -678,7 +722,7 @@ route('POST', '/api/invites/accept', async ({ req, res }) => {
       if (emailTaken(newUser.email)) throw new HttpError(409, 'Já existe uma conta com esse e-mail.');
       const now = Date.now();
       userId = Number(S('INSERT INTO users (username, email, name, pass_hash, kind, terms_accepted_at, created_at) VALUES (?,?,?,?,?,?,?)')
-        .run(uniqueUsername(newUser.email), newUser.email, newUser.name, newUser.hash, inv.role === 'planner' ? 'planner' : 'couple', now, now).lastInsertRowid);
+        .run(uniqueUsername(newUser.email), newUser.email, newUser.name, newUser.hash, kind, now, now).lastInsertRowid);
     }
     // Uso único: marca como usado na mesma transação (dois cliques no mesmo link não viram dois acessos).
     const used = S('UPDATE invites SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL').run(Date.now(), userId, inv.id);
@@ -688,7 +732,6 @@ route('POST', '/api/invites/accept', async ({ req, res }) => {
       if (n >= MAX_MEMBERS) throw new HttpError(400, `Este casamento já tem o limite de ${MAX_MEMBERS} pessoas. Fale com os noivos.`);
       S('INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, ?, ?, ?)').run(userId, inv.workspace_id, inv.role, Date.now());
     }
-    if (inv.role === 'planner') S("UPDATE users SET kind = 'planner' WHERE id = ?").run(userId);
     S('UPDATE users SET last_workspace_id = ? WHERE id = ?').run(inv.workspace_id, userId);
   });
   if (session && !b.mode) S('UPDATE sessions SET workspace_id = ? WHERE token_hash = ?').run(inv.workspace_id, session.tokenHash);
@@ -700,15 +743,13 @@ route('POST', '/api/invites/accept', async ({ req, res }) => {
 route('PUT', '/api/users/:id', async ({ req, res, params, session }) => {
   const id = Number(params.id);
   const role = (await readJson(req)).role;
-  if (!['couple', 'planner', 'member'].includes(role)) throw new HttpError(400, 'Tipo de acesso inválido.');
+  if (!['couple', 'member'].includes(role)) throw new HttpError(400, 'Tipo de acesso inválido. A assessoria entra só pelo convite de assessoria.');
   if (id === session.user_id) throw new HttpError(400, 'Você não pode mudar o próprio tipo de acesso.');
   const m = S('SELECT role FROM memberships WHERE user_id = ? AND workspace_id = ?').get(id, session.workspace_id);
   if (!m) throw new HttpError(404, 'Pessoa não encontrada neste casamento.');
   if (m.role === 'owner') throw new HttpError(403, 'Não é possível mudar o acesso de quem criou o casamento.');
-  tx(() => {
-    S('UPDATE memberships SET role = ? WHERE user_id = ? AND workspace_id = ?').run(role, id, session.workspace_id);
-    if (role === 'planner') S("UPDATE users SET kind = 'planner' WHERE id = ?").run(id);
-  });
+  if (m.role === 'planner') throw new HttpError(400, 'A assessoria tem um perfil próprio, só de consulta. Para tirar o acesso, remova a pessoa.');
+  S('UPDATE memberships SET role = ? WHERE user_id = ? AND workspace_id = ?').run(role, id, session.workspace_id);
   send(res, 200, { ok: true, role });
 }, { manage: true });
 
@@ -780,10 +821,12 @@ route('POST', '/api/sessions/revoke-others', ({ res, session }) => {
 // Dados do casamento
 route('GET', '/api/data', ({ res, session }) => {
   const ws = session.workspace_id;
-  const { items, files } = exportWorkspace(ws);
+  let { items, files } = exportWorkspace(ws);
+  let settings = getSettings(ws);
   const users = S('SELECT u.id, u.name FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ?').all(ws)
     .map((u) => ({ id: u.id, name: u.name }));
-  send(res, 200, { settings: getSettings(ws), items, files, users });
+  if (session.role === 'planner') ({ items, files, settings } = plannerData(items, files, settings));
+  send(res, 200, { settings, items, files, users });
 });
 
 route('PUT', '/api/settings', async ({ req, res, session }) => {
@@ -890,7 +933,7 @@ route('POST', '/api/files', async ({ req, res, session }) => {
 route('GET', '/api/files/:id', ({ res, params, url, session }) => {
   if (!isUuid(params.id)) throw new HttpError(400, 'ID inválido.');
   const f = S('SELECT * FROM files WHERE id = ? AND workspace_id = ?').get(params.id, session.workspace_id);
-  if (!f) throw new HttpError(404, 'Arquivo não encontrado.');
+  if (!f || (session.role === 'planner' && !PLANNER_FILE_CATS.has(f.category))) throw new HttpError(404, 'Arquivo não encontrado.');
   const p = path.join(UPLOAD_DIR, f.id);
   let st;
   try { st = fs.statSync(p); } catch { throw new HttpError(404, 'Arquivo não encontrado no disco.'); }
@@ -930,7 +973,7 @@ route('DELETE', '/api/files/:id', ({ res, params, session }) => {
   const r = S('DELETE FROM files WHERE id = ? AND workspace_id = ?').run(params.id, session.workspace_id);
   if (r.changes) fs.rmSync(path.join(UPLOAD_DIR, params.id), { force: true });
   send(res, 200, { ok: true });
-});
+}, { team: true });
 
 route('GET', '/api/export', ({ res, session }) => {
   const ws = session.workspace_id;
@@ -945,7 +988,7 @@ route('GET', '/api/export', ({ res, session }) => {
     'Cache-Control': 'no-store',
   });
   res.end(body);
-});
+}, { team: true });
 
 // Excluir a conta do casal (todos os dados e arquivos) — LGPD.
 route('DELETE', '/api/workspace', async ({ req, res, session }) => {
@@ -1010,6 +1053,7 @@ async function handleApi(req, res, url) {
     }
     if (r.owner && session.role !== 'owner') throw new HttpError(403, 'Só quem criou o casamento no planejador pode fazer isso.');
     if (r.manage && !MANAGER_ROLES.has(session.role)) throw new HttpError(403, 'Só os noivos podem gerenciar quem tem acesso.');
+    if ((r.write || r.team) && session.role === 'planner') throw new HttpError(403, PLANNER_READONLY);
     if (r.write && session.access !== 'full') {
       throw new HttpError(402, session.plan === 'trial'
         ? 'Seu período de teste terminou. Assine para continuar editando — seus dados continuam disponíveis para consulta e download.'

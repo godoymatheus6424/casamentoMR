@@ -14,8 +14,9 @@ import documents from './views/documents.js';
 import notes from './views/notes.js';
 import gifts from './views/gifts.js';
 import settings, { deleteMyAccount } from './views/settings.js';
+import { PLANNER_ROUTES, PLANNER_TABS } from './views/planner.js';
 
-const ROUTES = [
+const COUPLE_ROUTES = [
   { id: 'inicio', label: 'Visão geral', short: 'Início', icon: 'home', view: dashboard },
   { id: 'tarefas', label: 'Tarefas', icon: 'check', view: tasks },
   { id: 'fornecedores', label: 'Fornecedores', icon: 'briefcase', view: vendors },
@@ -28,7 +29,11 @@ const ROUTES = [
   { id: 'presentes', label: 'Presentes', icon: 'gift', view: gifts },
   { id: 'config', label: 'Configurações', icon: 'settings', view: settings },
 ];
-const TABS = ['inicio', 'tarefas', 'fornecedores', 'convidados'];
+const COUPLE_TABS = ['inicio', 'tarefas', 'fornecedores', 'convidados'];
+// Noivos e família usam o planejador completo; a assessoria tem telas próprias, só de consulta.
+const plannerWs = () => state.workspace?.role === 'planner';
+const routes = () => (plannerWs() ? PLANNER_ROUTES : COUPLE_ROUTES);
+const tabs = () => (plannerWs() ? PLANNER_TABS : COUPLE_TABS);
 const app = document.getElementById('app');
 
 // ---------------------------------------------------------------------------
@@ -93,16 +98,28 @@ async function renderAcceptInvite(token) {
     document.querySelector('[data-go]').onclick = async () => { history.replaceState(null, '', '#/inicio'); startSession(await api('GET', '/api/me')); };
     return;
   }
+  // Os perfis são independentes: só um perfil de assessoria aceita convite de assessoria com a sessão aberta.
+  // Convite de noivos/família sempre cria uma conta nova (conta de noivos tem um casamento só).
+  const fits = info.role === 'planner' && isPlanner();
+  const who = `${state.user.name} (${state.user.email || state.user.username})`;
+  const why = info.role === 'planner'
+    ? `Este convite é para um perfil de assessoria, e você está na conta de noivos de ${who}. Os dois perfis são separados: saia para entrar no seu perfil de assessoria ou criar um.`
+    : isPlanner()
+      ? `Este convite é para noivos ou família, e você está no perfil de assessoria de ${who}. Saia para criar a conta deste casamento.`
+      : `Você está na conta de ${who}, que já pertence a um casamento. Cada conta de noivos tem um casamento só: saia para criar a conta deste convite.`;
   authScreen(html`<h1>Aceitar convite</h1>
     <p class="muted center">Acesso ao planejamento do casamento <strong>${info.wedding}</strong>, como <strong>${INVITE_ROLE[info.role] || 'convidado(a)'}</strong>.</p>
-    <p class="muted center small">Você está conectado(a) como ${state.user.name} (${state.user.email || state.user.username}).</p>
+    ${fits ? html`<p class="muted center small">Você está no perfil de assessoria de ${who}.</p>` : html`<p class="hint">${icon('alert')} ${why}</p>`}
     <p class="form-error" role="alert"></p>
     <div class="planner-actions">
-      <button type="button" class="btn btn-primary btn-block" data-accept>Aceitar e abrir o casamento</button>
-      <button type="button" class="btn btn-ghost btn-block" data-other>Usar outra conta</button>
+      ${fits ? html`<button type="button" class="btn btn-primary btn-block" data-accept>Aceitar e abrir o casamento</button>` : ''}
+      <button type="button" class="btn ${fits ? 'btn-ghost' : 'btn-primary'} btn-block" data-other>${fits ? 'Usar outro perfil' : 'Sair e continuar com o convite'}</button>
+      ${fits ? '' : html`<button type="button" class="btn btn-ghost btn-block" data-back>Voltar para a minha conta</button>`}
     </div>`, { back: false });
   const card = document.querySelector('.auth-card');
-  card.querySelector('[data-accept]').onclick = async (e) => {
+  const back = card.querySelector('[data-back]');
+  if (back) back.onclick = async () => { history.replaceState(null, '', '#/inicio'); startSession(await api('GET', '/api/me')); };
+  card.querySelector('[data-accept]')?.addEventListener('click', async (e) => {
     const b = e.currentTarget;
     b.classList.add('loading');
     try {
@@ -110,7 +127,7 @@ async function renderAcceptInvite(token) {
       history.replaceState(null, '', '#/inicio');
       await startSession(await api('GET', '/api/me'));
     } catch (ex) { b.classList.remove('loading'); card.querySelector('.form-error').textContent = ex.message; }
-  };
+  });
   card.querySelector('[data-other]').onclick = async () => {
     try { await api('POST', '/api/logout'); } catch { /* ignora */ }
     location.reload(); // o endereço continua com o convite: abre a tela para criar conta ou entrar
@@ -197,9 +214,9 @@ function renderShell() {
         <span class="brand-mark">${icon('heart')}</span>
         <span class="brand-text"><strong id="brand-title"></strong><small id="brand-sub"></small></span>
       </a>
-      ${state.workspaceCount > 1 || isPlanner() ? html`<button type="button" class="ws-switch" data-switch title="Meus casamentos">${icon('users')}<span>${isPlanner() ? 'Meus casamentos' : 'Trocar casamento'}</span></button>` : ''}
+      ${isPlanner() ? html`<button type="button" class="ws-switch" data-switch title="Meus casamentos">${icon('users')}<span>Meus casamentos</span></button>` : ''}
       <nav class="nav" aria-label="Seções">
-        ${ROUTES.map((r) => html`<a href="#/${r.id}" data-route="${r.id}" title="${r.label}">${icon(r.icon)}<span>${r.label}</span></a>`)}
+        ${routes().map((r) => html`<a href="#/${r.id}" data-route="${r.id}" title="${r.label}">${icon(r.icon)}<span>${r.label}</span></a>`)}
       </nav>
       <div class="side-foot">
         <span class="me">${icon('user')}<span>${state.user.name}</span></span>
@@ -208,7 +225,7 @@ function renderShell() {
     </aside>
     <main class="main" id="main"><div id="plan-banner"></div><div id="view" class="view"></div></main>
     <nav class="tabbar" aria-label="Navegação rápida">
-      ${TABS.map((id) => { const r = ROUTES.find((x) => x.id === id); return html`<a href="#/${r.id}" data-route="${r.id}">${icon(r.icon)}<span>${r.short || r.label}</span></a>`; })}
+      ${tabs().map((id) => { const r = routes().find((x) => x.id === id); return html`<a href="#/${r.id}" data-route="${r.id}">${icon(r.icon)}<span>${r.short || r.label}</span></a>`; })}
       <button type="button" data-more>${icon('more')}<span>Mais</span></button>
     </nav>
   </div>`);
@@ -241,9 +258,9 @@ function openMore() {
     title: 'Menu',
     size: 'sheet',
     body: html`<nav class="more-grid">
-      ${ROUTES.map((r) => html`<a href="#/${r.id}" class="${r.id === current ? 'active' : ''}">${icon(r.icon)}<span>${r.short || r.label}</span></a>`)}
+      ${routes().map((r) => html`<a href="#/${r.id}" class="${r.id === current ? 'active' : ''}">${icon(r.icon)}<span>${r.short || r.label}</span></a>`)}
     </nav>
-    ${state.workspaceCount > 1 || isPlanner() ? html`<button type="button" class="btn btn-ghost btn-block more-switch" data-sw>${icon('users')}<span>${isPlanner() ? 'Meus casamentos' : 'Trocar de casamento'}</span></button>` : ''}
+    ${isPlanner() ? html`<button type="button" class="btn btn-ghost btn-block more-switch" data-sw>${icon('users')}<span>Meus casamentos</span></button>` : ''}
     <div class="more-foot"><span class="me">${icon('user')} ${state.user.name}</span><button type="button" class="btn btn-ghost btn-sm" data-out>${icon('logout')}<span>Sair</span></button></div>`,
     onMount(mm) {
       mm.body.querySelectorAll('a').forEach((a) => { a.onclick = () => mm.close(); });
@@ -267,7 +284,7 @@ async function openSwitcher() {
 
 function routeFromHash() {
   const id = location.hash.replace(/^#\/?/, '').split(/[?/]/)[0] || 'inicio';
-  return ROUTES.find((r) => r.id === id) || ROUTES[0];
+  return routes().find((r) => r.id === id) || routes()[0];
 }
 
 // Aviso de período de teste / modo só leitura
@@ -299,7 +316,7 @@ function renderView(navigated) {
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   const more = document.querySelector('[data-more]');
-  if (more) more.classList.toggle('active', !TABS.includes(r.id));
+  if (more) more.classList.toggle('active', !tabs().includes(r.id));
 
   const title = coupleTitle();
   document.getElementById('brand-title').textContent = title;

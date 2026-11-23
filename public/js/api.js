@@ -28,6 +28,6 @@ export async function api(method, url, body, opts = {}) {
   if (res.status === 401 && !opts.allow401) window.dispatchEvent(new Event('auth:expired'));
   if (res.status === 402) window.dispatchEvent(new Event('plan:blocked'));
   if (res.status === 409 && data?.code === 'workspace_changed') window.dispatchEvent(new Event('workspace:changed'));
-  if (!res.ok) throw Object.assign(new Error(data?.error || `Erro ${res.status}`), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(data?.error || `Erro ${res.status}`), { status: res.status, code: data?.code });
   return data;
 }

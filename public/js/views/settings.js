@@ -16,7 +16,7 @@ async function loadUsers() {
 const fmtDay = (ms) => (ms ? new Date(ms).toLocaleDateString('pt-BR') : '');
 const isOwner = () => state.workspace?.role === 'owner';
 
-function passwordForm() {
+export function passwordForm() {
   formModal({
     title: 'Alterar senha',
     fields: [
@@ -32,7 +32,7 @@ function passwordForm() {
   });
 }
 
-function accountForm() {
+export function accountForm() {
   formModal({
     title: 'Minha conta',
     values: { name: state.user.name, email: state.user.email || '' },
@@ -55,7 +55,9 @@ function inviteForm(role = 'couple') {
   const planner = role === 'planner';
   formModal({
     title: planner ? 'Convidar assessoria' : 'Convidar pessoa',
-    intro: 'Vamos gerar um link de convite para vocês mandarem por WhatsApp ou como preferirem. Quem abrir o link cria a própria conta (ou entra na que já tem) e passa a ver e editar o planejamento. O link vale por 7 dias e só pode ser usado uma vez.',
+    intro: planner
+      ? 'Vamos gerar um link para mandar à assessoria por WhatsApp ou como preferirem. Ela entra com o perfil de assessoria (ou cria um) e tem acesso só para consulta: fornecedores e contatos, contratos e documentos, convidados e cronograma. Orçamento, pagamentos, tarefas e anotações ficam só com vocês. O link vale por 7 dias e funciona uma única vez.'
+      : 'Vamos gerar um link para mandar por WhatsApp ou como preferirem. Quem abrir cria a própria conta para este casamento: noivo(a) edita tudo e convida pessoas; família edita o planejamento. O link vale por 7 dias e funciona uma única vez.',
     values: { role },
     fields: [
       { name: 'role', label: 'Quem é', type: 'select', full: true, options: ROLE_OPTIONS },
@@ -126,11 +128,22 @@ export function deleteMyAccount() {
   });
 }
 
+async function removePlanner(u) {
+  if (!(await confirmDialog(`Remover o acesso de ${u.name} (assessoria) a este casamento? O perfil de assessoria dela continua existindo.`, { ok: 'Remover acesso' }))) return;
+  await run(async () => {
+    await api('DELETE', `/api/users/${u.id}`);
+    ui.users = null;
+    await loadAll();
+    toast('Acesso removido');
+  });
+}
+
 function roleForm(u) {
+  if (u.role === 'planner') return removePlanner(u);
   formModal({
     title: `Acesso de ${u.name}`,
     values: { role: u.role },
-    fields: [{ name: 'role', label: 'Quem é', type: 'select', full: true, options: ROLE_OPTIONS, hint: 'Noivos podem adicionar e remover pessoas. Assessoria e família editam o planejamento.' }],
+    fields: [{ name: 'role', label: 'Quem é', type: 'select', full: true, options: ROLE_OPTIONS.filter((o) => o.value !== 'planner'), hint: 'Noivo(a) edita tudo e gerencia quem tem acesso. Família edita o planejamento.' }],
     onSubmit: async (d) => {
       await api('PUT', `/api/users/${u.id}`, d);
       ui.users = null;
@@ -147,7 +160,7 @@ function roleForm(u) {
   });
 }
 
-async function leaveWorkspace() {
+export async function leaveWorkspace() {
   const many = (state.workspaceCount || 1) > 1;
   const planner = state.user?.kind === 'planner';
   const ok = await confirmDialog(many
@@ -163,7 +176,7 @@ async function leaveWorkspace() {
   });
 }
 
-async function devicesDialog() {
+export async function devicesDialog() {
   let list = [];
   try { list = await api('GET', '/api/sessions'); } catch (e) { toast(e.message, 'error'); return; }
   const device = (ua) => {
@@ -296,7 +309,7 @@ export default {
               <button type="button" class="btn-icon sm" data-act="cancelinvite" data-id="${v.id}" title="Cancelar convite" aria-label="Cancelar convite">${icon('x')}</button>
             </div>`) : ''}</div>`}
           ${manager && users && !users.some((u) => u.role === 'planner') && !(ui.invites || []).some((v) => v.role === 'planner') ? html`<div class="pad invite-planner">
-            <p class="small muted">Vocês têm assessoria ou cerimonial? Mandem um link de convite para ela acompanhar e editar o planejamento junto com vocês, inclusive contratos e documentos.</p>
+            <p class="small muted">Vocês têm assessoria ou cerimonial? Mandem um link de convite: ela consulta fornecedores e contatos, contratos, convidados e o cronograma, sem editar nada.</p>
             <button type="button" class="btn btn-ghost btn-sm" data-act="addplanner">${icon('plus')}<span>Convidar assessoria</span></button>
           </div>` : ''}
         </section>

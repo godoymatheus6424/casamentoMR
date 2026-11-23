@@ -56,13 +56,19 @@ export function renderAuth(msg = '') {
   if (route === 'convite') return renderInvite(params.get('token') || '');
   // Endereço principal sem sessão: página de apresentação. Qualquer outro (#/entrar, páginas do app): login.
   if (!route && !msg) return renderLanding();
-  return renderLogin(msg);
+  return renderLogin(msg, params.get('perfil') === 'assessoria' ? 'planner' : 'couple');
 }
 
-function renderLogin(msg = '') {
+// Login separado por tipo de conta: noivos (e família) e assessoria são perfis independentes.
+function renderLogin(msg = '', kind = 'couple') {
   const open = state.status.signupOpen;
-  authScreen(html`<h1>Bem-vindos de volta</h1>
-    <p class="muted center">Entre para continuar o planejamento.</p>
+  const planner = kind === 'planner';
+  authScreen(html`<h1>${planner ? 'Perfil de assessoria' : 'Bem-vindos de volta'}</h1>
+    <div class="seg-kind" role="tablist" aria-label="Tipo de conta">
+      <a href="#/entrar" role="tab" aria-selected="${!planner}" class="${planner ? '' : 'on'}">Noivos e família</a>
+      <a href="#/entrar?perfil=assessoria" role="tab" aria-selected="${planner}" class="${planner ? 'on' : ''}">Assessoria</a>
+    </div>
+    <p class="muted center">${planner ? 'Entre para ver os casamentos que você acompanha.' : 'Entre para continuar o planejamento.'}</p>
     <form id="login" class="stack" autocomplete="on" novalidate>
       <div class="field"><label for="lu">E-mail</label><input id="lu" name="username" type="text" inputmode="email" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="voce@email.com"></div>
       ${pwField('lp', 'password', 'Senha', 'current-password')}
@@ -70,12 +76,12 @@ function renderLogin(msg = '') {
       <p class="form-error" role="alert">${msg}</p>
       <button class="btn btn-primary btn-block" type="submit">Entrar</button>
     </form>
-    ${open ? html`<p class="auth-switch">Ainda não tem conta? <a href="#/cadastro" class="link">Criar conta grátis</a></p>` : ''}`);
+    ${open ? html`<p class="auth-switch">${planner ? html`Ainda não tem perfil? <a href="#/cadastro?perfil=assessoria" class="link">Criar perfil de assessoria</a>` : html`Ainda não tem conta? <a href="#/cadastro" class="link">Criar conta grátis</a>`}</p>` : ''}`);
   const f = app.querySelector('#login');
   bindForm(f, async () => {
     if (!f.username.value.trim() || !f.password.value) throw new Error('Informe e-mail e senha.');
     try {
-      await api('POST', '/api/login', { username: f.username.value.trim(), password: f.password.value, remember: f.remember.checked }, { allow401: true });
+      await api('POST', '/api/login', { kind, username: f.username.value.trim(), password: f.password.value, remember: f.remember.checked }, { allow401: true });
     } catch (e) {
       f.password.value = '';
       f.password.focus();
@@ -205,6 +211,8 @@ function renderReset(token) {
 // Convite por link (enviado pelos noivos por WhatsApp, por exemplo): cria a conta ou entra numa existente.
 export const INVITE_ROLE = { couple: 'noivo(a)', planner: 'assessoria', member: 'família / amigo(a)' };
 async function renderInvite(token, mode = 'signup') {
+  // Convite de noivos/família sempre cria uma conta nova (conta de noivos tem um casamento só).
+  // Convite de assessoria cria o perfil de assessoria ou entra no que ela já tem.
   let info;
   try { info = await api('GET', `/api/invites/info?token=${encodeURIComponent(token)}`); }
   catch (e) {
@@ -214,14 +222,15 @@ async function renderInvite(token, mode = 'signup') {
     return;
   }
   const planner = info.role === 'planner';
-  const signup = mode === 'signup';
+  const signup = !planner || mode === 'signup';
   authScreen(html`<h1>Você foi convidado(a)</h1>
     <p class="muted center">Acesso ao planejamento do casamento <strong>${info.wedding}</strong>, como <strong>${INVITE_ROLE[info.role] || 'convidado(a)'}</strong>.</p>
-    <div class="seg-kind" role="tablist" aria-label="Como entrar">
-      <a href="#" role="tab" data-mode="signup" aria-selected="${signup}" class="${signup ? 'on' : ''}">Criar conta</a>
-      <a href="#" role="tab" data-mode="login" aria-selected="${!signup}" class="${signup ? '' : 'on'}">Já tenho conta</a>
+    ${planner ? html`<div class="seg-kind" role="tablist" aria-label="Como entrar">
+      <a href="#" role="tab" data-mode="signup" aria-selected="${signup}" class="${signup ? 'on' : ''}">Criar perfil</a>
+      <a href="#" role="tab" data-mode="login" aria-selected="${!signup}" class="${signup ? '' : 'on'}">Já tenho perfil</a>
     </div>
-    ${planner ? html`<p class="muted center small">${signup ? 'Sua conta vira o seu perfil de assessoria: os próximos casais que convidarem você aparecem no mesmo perfil.' : 'Entre com o seu perfil de assessoria e este casamento entra em "Meus casamentos".'}</p>` : ''}
+    <p class="muted center small">${signup ? 'O perfil de assessoria é separado das contas de noivos. Os próximos casais que convidarem você aparecem nele, para consulta.' : 'Entre com o seu perfil de assessoria e este casamento entra em "Meus casamentos".'}</p>`
+      : html`<p class="muted center small">Crie a sua conta para este casamento.</p>`}
     <form id="invite" class="stack" novalidate>
       ${signup ? html`<div class="field"><label for="in">${planner ? 'Seu nome ou da assessoria' : 'Seu nome'}</label><input id="in" name="name" autocomplete="name" required value="${info.name || ''}"></div>` : ''}
       <div class="field"><label for="ie">E-mail</label><input id="ie" name="email" type="email" autocomplete="${signup ? 'email' : 'username'}" autocapitalize="none" spellcheck="false" required><small>${signup ? 'É o seu login. Não enviamos nada para confirmar.' : ''}</small></div>
@@ -229,7 +238,7 @@ async function renderInvite(token, mode = 'signup') {
       ${signup ? pwField('ipw2', 'password2', 'Confirme a senha', 'new-password') : ''}
       ${signup ? html`<label class="check terms"><input type="checkbox" name="terms"><span>Li e aceito os <a href="/termos.html" target="_blank" rel="noopener" class="link">Termos de Uso</a> e a <a href="/privacidade.html" target="_blank" rel="noopener" class="link">Política de Privacidade</a></span></label>` : ''}
       <p class="form-error" role="alert"></p>
-      <button class="btn btn-primary btn-block" type="submit">${signup ? 'Criar conta e entrar' : 'Entrar e aceitar'}</button>
+      <button class="btn btn-primary btn-block" type="submit">${signup ? (planner ? 'Criar perfil e entrar' : 'Criar conta e entrar') : 'Entrar e aceitar'}</button>
     </form>
     ${signup ? '' : html`<p class="auth-switch"><a href="#/esqueci" class="link small">Esqueci minha senha</a></p>`}`, { wide: signup });
   app.querySelectorAll('[data-mode]').forEach((a) => {

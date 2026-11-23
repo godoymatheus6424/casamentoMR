@@ -14,13 +14,15 @@ Modelo de receita: assinatura **R$ 9,90/mês** ou **R$ 89/ano**, com **14 dias g
 | Período de teste; quando acaba sem assinatura, o espaço fica **só leitura** (nada é apagado) | ✅ |
 | Limite de armazenamento por espaço | ✅ |
 | Tipos de acesso: **Noivo(a)**, **Assessoria** e **Família/amigo**. Só os noivos adicionam, removem ou mudam acessos | ✅ |
+| **Dois perfis independentes:** conta de noivos (e família) pertence a um único casamento e edita tudo; perfil de assessoria é separado (login com aba própria), acompanha vários casamentos e nunca vira conta de noivos, nem o contrário | ✅ |
+| **Assessoria só consulta:** visão geral, fornecedores com contatos, contratos e documentos, convidados e cronograma. Não cadastra, não edita, não faz anotações, não convida pessoas. Não recebe orçamento, pagamentos, valores, comprovantes, tarefas, anotações nem presentes (filtrado no servidor) | ✅ |
 | **Perfil da assessoria:** uma conta só, com acesso a vários casamentos e troca entre eles ("Meus casamentos"). Os noivos dão acesso por link de convite | ✅ |
 | Cadastro próprio da assessoria ("Criar conta → Sou assessora"): perfil sem casamento, que recebe os casamentos quando cada casal dá acesso | ✅ |
 | Convites por link, sem depender de e-mail: os noivos geram o link (vale 7 dias, uso único, pode ser cancelado) e mandam por WhatsApp; quem abre cria a própria conta ou entra na que já tem. Os noivos nunca definem a senha de ninguém | ✅ |
 | O perfil da assessoria continua existindo quando ela é removida, sai do último casamento ou o casamento é excluído; ela pode excluir o próprio perfil | ✅ |
 | Proteção entre abas: se a sessão trocar de casamento em outra aba, a tela antiga não lê nem grava no casamento errado | ✅ |
 | "Sair deste casamento" para quem não é dono(a) (ex.: a assessoria ao fim do contrato) | ✅ |
-| A assessoria **abre, baixa e envia contratos** e demais documentos do casamento (requisito: manter isso mesmo se um dia houver opção de esconder a parte financeira) | ✅ |
+| A assessoria **abre e baixa contratos** e demais documentos do casamento (o envio fica com os noivos; comprovantes e orçamentos não aparecem para ela) | ✅ |
 | Exportar dados e **excluir conta** (LGPD) | ✅ |
 | Ferramenta de administração (`node admin.js`) para listar espaços e liberar planos manualmente | ✅ |
 | Rascunho de Termos de Uso e Política de Privacidade | ✅ rascunho, **revisar com advogado** |
