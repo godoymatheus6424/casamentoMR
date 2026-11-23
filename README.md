@@ -69,7 +69,7 @@ O projeto já vem com um `Dockerfile`, então o Easypanel monta e roda o site so
 2. **Source:** escolha *GitHub* e selecione o repositório, branch `main`.
 3. **Build:** escolha **Dockerfile** (caminho `Dockerfile`).
 4. **Mounts → Add Volume Mount:** nome `data`, caminho de montagem **`/data`**. ⚠️ Esse passo é essencial: é aqui que ficam o banco e os contratos. Sem ele, tudo se perde a cada atualização.
-5. **Environment:** nada é obrigatório (o Dockerfile já define `PORT=3000`, `DATA_DIR=/data` e `TRUST_PROXY=1`). Se quiser, defina `SETUP_CODE=um-codigo-seu`.
+5. **Environment:** o Dockerfile já define `PORT=3000`, `DATA_DIR=/data`, `TRUST_PROXY=1` e `SIGNUP_OPEN=1` (cadastro aberto pelo site). Defina também `APP_URL=https://seudominio.com.br` (usado nos links de senha e convite) e, para enviar e-mails, `RESEND_API_KEY` e `MAIL_FROM`. Para um site de um casamento só, sem cadastro público, use `SIGNUP_OPEN=0`.
 6. Clique em **Deploy**.
 
 **3. Aponte o domínio.**
@@ -83,7 +83,7 @@ O projeto já vem com um `Dockerfile`, então o Easypanel monta e roda o site so
 
 Se o domínio estiver ligado a algum projeto da Vercel, remova-o do projeto primeiro, senão a Vercel continua respondendo por ele.
 
-**4. Primeiro acesso.** Abra a aba **Logs** do app no Easypanel. Lá aparece o **código de configuração** (ou use o `SETUP_CODE` que você definiu). Depois é só abrir `https://seudominio.com.br` e criar a conta.
+**4. Primeiro acesso.** Abra `https://seudominio.com.br` e use **Criar conta** (noivos) ou **Criar perfil de assessoria**. Só no modo `SIGNUP_OPEN=0` a primeira conta pede o **código de configuração**, que aparece na aba **Logs** do app (ou o `SETUP_CODE` que você definiu).
 
 **Atualizar:** envie as mudanças para o GitHub e clique em **Deploy** de novo (ou ative o *Auto Deploy*). O volume `/data` é mantido.
 
@@ -105,7 +105,7 @@ Outras opções: `HOST` (padrão `0.0.0.0`) e `MAX_UPLOAD_MB` (padrão 25).
 
 ## Vários casais (cadastro aberto)
 
-O mesmo servidor pode atender vários casais, cada um no seu espaço isolado, com teste grátis e assinatura. Com a variável `SIGNUP_OPEN=1` o cadastro público abre; sem ela, o site funciona como uma instalação própria (um casamento). O plano completo, com as fases e as variáveis de ambiente, está em [docs/PLANO-MULTICASAL.md](docs/PLANO-MULTICASAL.md).
+O mesmo servidor pode atender vários casais, cada um no seu espaço isolado, com teste grátis e assinatura. Na imagem Docker o cadastro público já vem aberto (`SIGNUP_OPEN=1`); rodando pelo `iniciar.bat`, ou com `SIGNUP_OPEN=0`, o site funciona como uma instalação própria (um casamento). O plano completo, com as fases e as variáveis de ambiente, está em [docs/PLANO-MULTICASAL.md](docs/PLANO-MULTICASAL.md).
 
 Administração pela linha de comando (no Easypanel, pela aba **Console** do app):
 

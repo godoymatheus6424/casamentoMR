@@ -162,7 +162,45 @@ function bindWeddingList(root, onDone = () => {}) {
   });
 }
 
-// Perfil da assessoria sem casamento aberto: lista (ou convite para pedir acesso), conta e sair.
+// A assessora adiciona um casamento digitando o código de acesso que os noivos passaram.
+function joinForm() {
+  return html`<form class="join-form" novalidate>
+    <label for="join-code">Adicionar casamento</label>
+    <div class="join-row">
+      <input id="join-code" name="code" placeholder="Código dos noivos (ex.: K7QM-3XPA)" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" required>
+      <button type="submit" class="btn btn-primary">Adicionar</button>
+    </div>
+    <small class="join-hint">Os noivos encontram o código em Configurações › Assessoria.</small>
+    <p class="form-error" role="alert"></p>
+  </form>`;
+}
+function bindJoin(root) {
+  const f = root.querySelector('.join-form');
+  if (!f) return;
+  f.code.oninput = () => {
+    const v = f.code.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    f.code.value = v.length > 4 ? `${v.slice(0, 4)}-${v.slice(4)}` : v;
+  };
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const err = f.querySelector('.form-error');
+    const btn = f.querySelector('[type=submit]');
+    err.textContent = '';
+    if (f.code.value.replace(/-/g, '').length !== 8) { err.textContent = 'O código tem 8 letras e números.'; return; }
+    btn.disabled = true; btn.classList.add('loading');
+    try {
+      await api('POST', '/api/planner/join', { code: f.code.value });
+      closeAllModals();
+      history.replaceState(null, '', '#/inicio');
+      await startSession(await api('GET', '/api/me'));
+    } catch (ex) {
+      err.textContent = ex.message;
+      btn.disabled = false; btn.classList.remove('loading');
+    }
+  };
+}
+
+// Perfil da assessoria sem casamento aberto: lista (ou como adicionar o primeiro), conta e sair.
 async function renderPlannerHome() {
   let list = [];
   try { list = await api('GET', '/api/workspaces'); } catch { /* lista vazia */ }
@@ -171,18 +209,17 @@ async function renderPlannerHome() {
     <p class="muted center">Olá, ${state.user.name.split(' ')[0]}. ${list.length ? 'Escolha o casamento que deseja abrir.' : ''}</p>
     ${list.length ? weddingList(list) : html`<div class="planner-empty">
       <p>Ainda não há casamentos no seu perfil.</p>
-      <p class="muted small">Peça aos noivos um link de convite (em <strong>Configurações → Quem tem acesso → Convidar assessoria</strong>) e abra o link com este perfil. O casamento aparece aqui na hora.</p>
+      <p class="muted small">Peça a cada casal o <strong>código de acesso da assessoria</strong> e digite abaixo. O casamento aparece aqui na hora, para consulta.</p>
     </div>`}
+    ${joinForm()}
     <div class="planner-actions">
-      ${list.length ? '' : html`<button type="button" class="btn btn-primary btn-block" data-act="reload">Atualizar</button>`}
       <button type="button" class="btn btn-ghost btn-block" data-act="logout">${icon('logout')}<span>Sair</span></button>
     </div>
     <p class="auth-switch small"><button type="button" class="link-btn muted" data-act="delete">Excluir meu perfil</button></p>`, { wide: true, back: false });
   const card = document.querySelector('.auth-card');
   bindWeddingList(card);
+  bindJoin(card);
   card.querySelector('[data-act="logout"]').onclick = logout;
-  const rl = card.querySelector('[data-act="reload"]');
-  if (rl) rl.onclick = async () => startSession(await api('GET', '/api/me'));
   card.querySelector('[data-act="delete"]').onclick = deleteMyAccount;
 }
 
@@ -277,8 +314,8 @@ async function openSwitcher() {
   try { list = await api('GET', '/api/workspaces'); } catch (e) { return; }
   openModal({
     title: 'Meus casamentos',
-    body: html`${weddingList(list)}${isPlanner() && list.length === 1 ? html`<p class="hint">${icon('alert')} Quando outro casal mandar um link de convite, abra o link com este perfil e o casamento aparece aqui.</p>` : ''}`,
-    onMount(m) { bindWeddingList(m.body); },
+    body: html`${weddingList(list)}${isPlanner() ? joinForm() : ''}`,
+    onMount(m) { bindWeddingList(m.body); bindJoin(m.body); },
   });
 }
 

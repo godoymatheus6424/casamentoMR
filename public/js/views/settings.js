@@ -4,7 +4,40 @@ import { html, icon, pageHead, formModal, openModal, toast, run, fmtDateTime, fm
 import { weddingForm } from '../forms.js';
 import { ROLE_LABELS, ROLE_OPTIONS, isManager } from '../domain.js';
 
-const ui = { users: null, loading: false, refreshed: false, invites: null, invLoading: false };
+const ui = { users: null, loading: false, refreshed: false, invites: null, invLoading: false, code: null, codeLoading: false };
+
+// Código de acesso da assessoria (só noivos veem): a assessora digita no perfil dela, em "Meus casamentos".
+async function loadCode() {
+  if (ui.codeLoading) return;
+  ui.codeLoading = true;
+  try { ui.code = (await api('GET', '/api/planner-code')).code; } catch { ui.code = ''; }
+  ui.codeLoading = false;
+  emit();
+}
+async function rotateCode() {
+  if (!(await confirmDialog('Gerar um código novo? O atual deixa de funcionar. Quem já entrou com ele continua com acesso (para tirar alguém, remova em "Quem tem acesso").', { ok: 'Gerar novo código', danger: false }))) return;
+  await run(async () => { ui.code = (await api('POST', '/api/planner-code/rotate')).code; emit(); toast('Novo código gerado'); });
+}
+function codeShareText() {
+  return `Código de acesso do nosso casamento no BRIDEx: ${ui.code}
+No seu perfil de assessoria, abra "Meus casamentos" e digite o código para acompanhar o planejamento.
+${location.origin}/#/entrar?perfil=assessoria`;
+}
+function plannerCard() {
+  return html`<section class="card o-3">
+    <header class="card-head"><h2>${icon('briefcase')} Assessoria</h2></header>
+    <p class="pad muted">Passe este código para a sua assessoria ou cerimonial. Ela cria um perfil de assessoria, digita o código em "Meus casamentos" e passa a consultar fornecedores e contatos, contratos, convidados e o cronograma, sem editar nada.</p>
+    <div class="pad code-box">
+      <span class="access-code" aria-label="Código de acesso">${ui.code == null ? '••••-••••' : ui.code || 'indisponível'}</span>
+      ${ui.code ? html`<div class="code-actions">
+        <button type="button" class="btn btn-ghost btn-sm" data-act="copycode">${icon('paste')}<span>Copiar</span></button>
+        <a class="btn btn-ghost btn-sm" href="https://wa.me/?text=${encodeURIComponent(codeShareText())}" target="_blank" rel="noopener noreferrer">${icon('chat')}<span>WhatsApp</span></a>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="rotatecode">Gerar novo</button>
+      </div>` : ''}
+    </div>
+    <p class="pad small muted">Só vocês veem este código. Orçamento, pagamentos, tarefas e anotações nunca aparecem para a assessoria.</p>
+  </section>`;
+}
 
 async function loadUsers() {
   if (ui.loading) return;
@@ -52,15 +85,12 @@ export function accountForm() {
 }
 
 function inviteForm(role = 'couple') {
-  const planner = role === 'planner';
   formModal({
-    title: planner ? 'Convidar assessoria' : 'Convidar pessoa',
-    intro: planner
-      ? 'Vamos gerar um link para mandar à assessoria por WhatsApp ou como preferirem. Ela entra com o perfil de assessoria (ou cria um) e tem acesso só para consulta: fornecedores e contatos, contratos e documentos, convidados e cronograma. Orçamento, pagamentos, tarefas e anotações ficam só com vocês. O link vale por 7 dias e funciona uma única vez.'
-      : 'Vamos gerar um link para mandar por WhatsApp ou como preferirem. Quem abrir cria a própria conta para este casamento: noivo(a) edita tudo e convida pessoas; família edita o planejamento. O link vale por 7 dias e funciona uma única vez.',
+    title: 'Convidar pessoa',
+    intro: 'Vamos gerar um link para mandar por WhatsApp ou como preferirem. Quem abrir cria a própria conta para este casamento: noivo(a) edita tudo e convida pessoas; família edita o planejamento. O link vale por 7 dias e funciona uma única vez.',
     values: { role },
     fields: [
-      { name: 'role', label: 'Quem é', type: 'select', full: true, options: ROLE_OPTIONS },
+      { name: 'role', label: 'Quem é', type: 'select', full: true, options: ROLE_OPTIONS.filter((o) => o.value !== 'planner'), hint: 'Para a assessoria, use o código de acesso no card Assessoria.' },
       { name: 'name', label: 'Nome', full: true, hint: 'Opcional, só para vocês identificarem o convite na lista.' },
     ],
     submitLabel: 'Gerar link',
@@ -308,11 +338,9 @@ export default {
               <span class="badge ${v.role === 'planner' ? 'b-accent' : v.role === 'member' ? 'b-muted' : 'b-ok'}">${ROLE_LABELS[v.role] || v.role}</span>
               <button type="button" class="btn-icon sm" data-act="cancelinvite" data-id="${v.id}" title="Cancelar convite" aria-label="Cancelar convite">${icon('x')}</button>
             </div>`) : ''}</div>`}
-          ${manager && users && !users.some((u) => u.role === 'planner') && !(ui.invites || []).some((v) => v.role === 'planner') ? html`<div class="pad invite-planner">
-            <p class="small muted">Vocês têm assessoria ou cerimonial? Mandem um link de convite: ela consulta fornecedores e contatos, contratos, convidados e o cronograma, sem editar nada.</p>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="addplanner">${icon('plus')}<span>Convidar assessoria</span></button>
-          </div>` : ''}
         </section>
+
+        ${manager ? plannerCard() : ''}
 
         <section class="card o-6">
           <header class="card-head"><h2>${icon('download')} Seus dados</h2></header>
@@ -335,6 +363,7 @@ export default {
   mount(el) {
     if (ui.users == null) loadUsers();
     if (ui.invites == null && isManager(state.workspace?.role)) loadInvites();
+    if (ui.code == null && isManager(state.workspace?.role)) loadCode();
     if (!ui.refreshed) { ui.refreshed = true; refreshMe().then(emit).catch(() => {}); }
     el.onclick = async (e) => {
       const a = e.target.closest('[data-act]');
@@ -345,7 +374,10 @@ export default {
         case 'password': passwordForm(); break;
         case 'devices': devicesDialog(); break;
         case 'adduser': inviteForm(); break;
-        case 'addplanner': inviteForm('planner'); break;
+        case 'copycode':
+          navigator.clipboard?.writeText(ui.code).then(() => toast('Código copiado'), () => toast(ui.code));
+          break;
+        case 'rotatecode': rotateCode(); break;
         case 'cancelinvite': cancelInvite(a.dataset.id); break;
         case 'role': {
           const u = ui.users?.find((x) => String(x.id) === a.dataset.id);
@@ -368,3 +400,4 @@ export default {
 
 // Ao sair da tela, força atualizar o plano da próxima vez que ela abrir.
 window.addEventListener('hashchange', () => { ui.refreshed = false; ui.invites = null; });
+window.addEventListener('workspace:changed', () => { ui.code = null; });

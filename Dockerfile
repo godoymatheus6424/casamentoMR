@@ -4,11 +4,14 @@ FROM node:24-alpine
 # su-exec: inicia como root só para ajustar a permissão do volume, depois roda como usuário comum
 RUN apk add --no-cache su-exec
 
+# SIGNUP_OPEN=1: site público, qualquer casal ou assessora cria conta pelo site. Para voltar ao modo
+# "instalação própria" (um casamento só, com código de configuração), defina SIGNUP_OPEN=0 no Easypanel.
 ENV NODE_ENV=production \
     PORT=3000 \
     HOST=0.0.0.0 \
     DATA_DIR=/data \
-    TRUST_PROXY=1
+    TRUST_PROXY=1 \
+    SIGNUP_OPEN=1
 
 WORKDIR /app
 COPY package.json server.js admin.js ./

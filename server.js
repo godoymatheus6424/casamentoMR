@@ -52,6 +52,20 @@ const FILE_CATEGORIES = new Set(['contrato', 'orcamento', 'comprovante', 'inspir
 // Nada financeiro (orçamento, pagamentos, valores, comprovantes) e nada pessoal dos noivos (tarefas, anotações, presentes).
 const PLANNER_FILE_CATS = new Set(['contrato', 'documento', 'inspiracao', 'outros']);
 const PLANNER_READONLY = 'O acesso da assessoria é só para consulta. Para mudar algo, fale com os noivos.';
+// Código de acesso da assessoria: 8 caracteres sem os que confundem (0/O, 1/I/L), mostrado como XXXX-XXXX.
+const CODE_ABC = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const fmtCode = (c) => `${c.slice(0, 4)}-${c.slice(4)}`;
+const normCode = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16);
+function newPlannerCode(ws) {
+  for (;;) {
+    const code = Array.from({ length: 8 }, () => CODE_ABC[crypto.randomInt(CODE_ABC.length)]).join('');
+    try { S('UPDATE workspaces SET planner_code = ? WHERE id = ?').run(code, ws); return code; }
+    catch (e) { if (!/UNIQUE/i.test(String(e.message))) throw e; } // colisão (raríssima): tenta outro
+  }
+}
+function plannerCode(ws) {
+  return S('SELECT planner_code FROM workspaces WHERE id = ?').get(ws)?.planner_code || newPlannerCode(ws);
+}
 const FILE_TYPES = {
   pdf: 'application/pdf',
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',
@@ -648,7 +662,8 @@ route('GET', '/api/users', ({ res, session }) => {
 // Noivos convidam pessoas (o par, a assessoria ou família/amigos) gerando um link de convite.
 route('POST', '/api/invites', async ({ req, res, session }) => {
   const b = await readJson(req);
-  const role = ['couple', 'planner', 'member'].includes(b.role) ? b.role : 'member';
+  if (b.role === 'planner') throw new HttpError(400, 'A assessoria entra com o código de acesso do casamento (em Configurações › Assessoria).');
+  const role = b.role === 'couple' ? 'couple' : 'member';
   const label = String(b.name || '').trim().slice(0, 60);
   const ws = session.workspace_id;
   const n = S('SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ?').get(ws).n;
@@ -767,6 +782,40 @@ route('DELETE', '/api/users/:id', ({ res, params, session }) => {
   });
   send(res, 200, { ok: true });
 }, { manage: true });
+
+// Código de acesso da assessoria: só os noivos veem e podem trocar (trocar não remove quem já entrou).
+route('GET', '/api/planner-code', ({ res, session }) => {
+  send(res, 200, { code: fmtCode(plannerCode(session.workspace_id)) });
+}, { manage: true });
+
+route('POST', '/api/planner-code/rotate', ({ res, session }) => {
+  send(res, 200, { code: fmtCode(newPlannerCode(session.workspace_id)) });
+}, { manage: true });
+
+// A assessora digita, no próprio perfil, o código que cada casal passou: o casamento entra para consulta.
+route('POST', '/api/planner/join', async ({ req, res, session }) => {
+  if (session.kind !== 'planner') throw new HttpError(403, 'Só perfis de assessoria adicionam casamentos por código.');
+  const rlIp = rateBucket(`plannercode:${clientIp(req)}`, 10);
+  const rlUser = rateBucket(`plannercode:u${session.user_id}`, 10);
+  const code = normCode((await readJson(req)).code);
+  const ws = code.length === 8 ? S('SELECT id, name FROM workspaces WHERE planner_code = ?').get(code) : null;
+  if (!ws) {
+    rlIp.n++; rlUser.n++;
+    await sleep(200 + crypto.randomInt(200));
+    throw new HttpError(404, 'Código não encontrado. Confira com os noivos: ele fica em Configurações › Assessoria.');
+  }
+  const uid = session.user_id;
+  tx(() => {
+    if (!S('SELECT 1 FROM memberships WHERE user_id = ? AND workspace_id = ?').get(uid, ws.id)) {
+      const n = S('SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ?').get(ws.id).n;
+      if (n >= MAX_MEMBERS) throw new HttpError(400, `Este casamento já tem o limite de ${MAX_MEMBERS} pessoas. Fale com os noivos.`);
+      S("INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, ?, 'planner', ?)").run(uid, ws.id, Date.now());
+    }
+    S('UPDATE users SET last_workspace_id = ? WHERE id = ?').run(ws.id, uid);
+    S('UPDATE sessions SET workspace_id = ? WHERE token_hash = ?').run(ws.id, session.tokenHash);
+  });
+  send(res, 200, { ok: true, wedding: ws.name });
+}, { ws: false });
 
 // Casamentos de que a pessoa participa (assessoras costumam ter vários)
 route('GET', '/api/workspaces', ({ res, session }) => {

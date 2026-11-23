@@ -92,7 +92,7 @@ function renderLogin(msg = '', kind = 'couple') {
 }
 
 // Cadastro: noivos (cria o casamento, com teste grátis) ou assessoria (só o perfil; os casamentos
-// chegam quando ela abre o link de convite que cada casal manda).
+// entram quando ela digita o código de acesso que cada casal passa).
 function renderSignup(kind = 'couple') {
   const days = state.status.trialDays || 14;
   const planner = kind === 'planner';
@@ -102,7 +102,7 @@ function renderSignup(kind = 'couple') {
       <a href="#/cadastro?perfil=assessoria" role="tab" aria-selected="${planner}" class="${planner ? 'on' : ''}">Sou assessora</a>
     </div>
     <p class="muted center">${planner
-      ? 'Um único perfil para todos os casamentos que você atende. Cada casal manda um link de convite e assina o próprio planejamento.'
+      ? 'Um único perfil, separado das contas de noivos, para todos os casamentos que você atende. Cada casal passa o código de acesso dele e você adiciona o casamento no seu perfil.'
       : `${days} dias grátis com tudo liberado. Não pedimos cartão.`}</p>
     <form id="signup" class="stack" novalidate>
       ${planner ? '' : html`<div class="two">
