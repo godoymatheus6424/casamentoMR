@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { BUDGET_CATEGORIES, TASK_TEMPLATE } from './public/js/seed.js';
 import { openDb, helpers, workspaceAccess, PLAN_LABELS, MANAGER_ROLES } from './lib/db.js';
 import { sendMail, emailLayout } from './lib/mail.js';
+import { paymentsCalendar } from './lib/ics.js';
 
 // ---------------------------------------------------------------------------
 // Configuração (variáveis de ambiente opcionais)
@@ -1189,6 +1190,42 @@ route('DELETE', '/api/files/:id', ({ res, params, session }) => {
   if (r.changes) fs.rmSync(path.join(UPLOAD_DIR, params.id), { force: true });
   send(res, 200, { ok: true });
 }, { team: true });
+
+// ---------------------------------------------------------------------------
+// Pagamentos na agenda (arquivo .ics)
+// ---------------------------------------------------------------------------
+// O app pede um link curto e abre o arquivo por ele. O link não depende do cookie: no iPhone, o app instalado
+// na tela de início abre o arquivo no Safari, que não tem a sessão. Vale 15 minutos e só lê os pagamentos escolhidos.
+const CAL_TTL = 15 * MIN;
+const calendarLinks = new Map(); // token → { ws, ids, exp }
+route('POST', '/api/calendar/link', async ({ req, res, session }) => {
+  if (session.role === 'planner') throw new HttpError(403, 'A assessoria não tem acesso aos pagamentos.');
+  const b = await readJson(req);
+  if (!Array.isArray(b.ids) || !b.ids.length || b.ids.length > 500 || !b.ids.every(isUuid)) throw new HttpError(400, 'Escolha os pagamentos.');
+  const now = Date.now();
+  for (const [t, l] of calendarLinks) if (l.exp < now) calendarLinks.delete(t);
+  if (calendarLinks.size > 5000) throw new HttpError(503, 'Muitos pedidos agora. Tente de novo em alguns minutos.');
+  const token = crypto.randomBytes(24).toString('base64url');
+  calendarLinks.set(token, { ws: session.workspace_id, ids: [...new Set(b.ids)], exp: now + CAL_TTL });
+  send(res, 200, { url: `/api/agenda/${token}/pagamentos.ics` });
+});
+route('GET', '/api/agenda/:token/:name', ({ res, params }) => {
+  const link = calendarLinks.get(params.token);
+  if (!link || link.exp < Date.now()) throw new HttpError(404, 'Link da agenda expirado. Volte ao BRIDEx e toque em "Adicionar à agenda" de novo.');
+  const { items } = exportWorkspace(link.ws);
+  const ids = new Set(link.ids);
+  const pays = items.payments.filter((p) => ids.has(p.id) && !p.paid).sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+  const vendors = new Map(items.vendors.map((v) => [v.id, v.name]));
+  const body = paymentsCalendar(pays, { vendors, appUrl: APP_URL });
+  res.writeHead(200, {
+    'Content-Type': 'text/calendar; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+    // "inline" faz o iPhone mostrar "Adicionar ao Calendário"; os outros navegadores baixam o arquivo.
+    'Content-Disposition': contentDisposition(true, 'pagamentos-casamento.ics'),
+    'Cache-Control': 'no-store',
+  });
+  res.end(body);
+}, { auth: false });
 
 route('GET', '/api/export', ({ res, session }) => {
   const ws = session.workspace_id;

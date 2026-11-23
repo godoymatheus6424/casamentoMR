@@ -1,7 +1,7 @@
 import { state, create, update, remove, updateMany, saveSettings, emit } from '../store.js';
 import { html, icon, pageHead, chips, empty, formModal, toast, money, moneyShort, fmtDate, fmtDateShort, todayISO, progress, badge, run, sum, confirmDialog, downloadCSV, csvMoney } from '../ui.js';
 import { budgetCats, contractedVendors, paidOf } from '../domain.js';
-import { paymentForm, togglePaid } from '../forms.js';
+import { paymentForm, togglePaid, calendarDialog, isUpcoming } from '../forms.js';
 import { BUDGET_CATEGORIES } from '../seed.js';
 import { openVendor, vendorForm } from './vendors.js';
 
@@ -127,6 +127,7 @@ function paymentsTab() {
         { value: 'todos', label: 'Todos', count: all.length },
       ], ui.pay)}
       <span class="spacer"></span>
+      ${all.some(isUpcoming) ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="calpay" title="Adicionar à agenda">${icon('calendar')}<span>Agenda</span></button>` : ''}
       <button type="button" class="btn btn-ghost btn-sm hide-sm" data-act="exportpay">${icon('download')}<span>Exportar</span></button>
       <button type="button" class="btn btn-ghost btn-sm" data-act="addpay">${icon('plus')}<span>Pagamento</span></button>
     </div>
@@ -194,6 +195,7 @@ export default {
         case 'editpay': paymentForm(state.items.payments.find((p) => p.id === id)); break;
         case 'paytoggle': run(() => togglePaid(state.items.payments.find((p) => p.id === id), a.checked)); break;
         case 'exportpay': exportPayments(); break;
+        case 'calpay': calendarDialog(state.items.payments.filter(isUpcoming)); break;
         case 'addvendor': vendorForm(); break;
       }
     };

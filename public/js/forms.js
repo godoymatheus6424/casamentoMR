@@ -1,5 +1,6 @@
 // Formulários e componentes compartilhados entre telas.
 import { state, create, update, remove, bulkCreate, saveSettings, uploadFile, updateFile, deleteFile, byId } from './store.js';
+import { api } from './api.js';
 import { html, icon, formModal, openModal, toast, todayISO, shiftISO, money, moneyInput, parseMoney, fmtSize, fmtDate, confirmDialog, selectOptions, sum, run } from './ui.js';
 import { PAYMENT_METHODS, FILE_CATEGORIES, fileCategory, IMAGE_EXT, paymentsOf, telLink, waLink, igLink, webLink } from './domain.js';
 
@@ -62,45 +63,149 @@ export async function togglePaid(p, paid) {
   toast(paid ? 'Marcado como pago' : 'Marcado como pendente');
 }
 
+// Data no dia escolhido do mês (ou no último dia, nos meses mais curtos).
+// month0 pode passar de 11 (vira o ano seguinte).
+function dayInMonth(year, month0, day) {
+  const first = new Date(year, month0, 1);
+  const y = first.getFullYear(), m = first.getMonth();
+  const last = new Date(y, m + 1, 0).getDate();
+  return `${y}-${String(m + 1).padStart(2, '0')}-${String(Math.min(day, last)).padStart(2, '0')}`;
+}
+
 export function installmentsForm(vendor) {
   const scheduled = sum(paymentsOf(vendor.id), (p) => p.amount);
-  const remaining = Math.max(0, (Number(vendor.price) || 0) - scheduled);
+  const price = Number(vendor.price) || 0;
+  const remaining = Math.max(0, price - scheduled);
+  const now = new Date();
+  // Meses para a 1ª parcela: do mês atual a 3 anos à frente.
+  const months = Array.from({ length: 36 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const label = d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    return { value: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: label[0].toUpperCase() + label.slice(1) };
+  });
+  const intro = price
+    ? `Valor de ${vendor.name}: ${money(price)}${scheduled ? `, com ${money(scheduled)} já lançados em pagamentos. Falta parcelar ${money(remaining)}` : ''}. Você pode editar cada parcela depois.`
+    : `Cria parcelas mensais para ${vendor.name}. Você pode editar cada uma depois.`;
   formModal({
     title: 'Gerar parcelas',
-    intro: `Cria parcelas mensais para ${vendor.name}. Você pode editar cada uma depois.`,
-    values: { total: remaining || '', count: 3, first: todayISO(), entry: '' },
+    intro,
+    values: { total: remaining || '', count: 3, day: 10, start: months[1].value, entry: '', entryDate: todayISO() },
     fields: [
-      { name: 'total', label: 'Valor total a parcelar', type: 'money', required: true },
+      { name: 'total', label: 'Valor a parcelar', type: 'money', required: true, full: true, hint: price ? 'Já vem com o valor que ainda não tem parcela.' : '' },
       { name: 'count', label: 'Número de parcelas', type: 'number', min: 1, max: 60, required: true },
-      { name: 'entry', label: 'Entrada / sinal (opcional)', type: 'money', hint: 'Descontada do total e lançada como primeira parcela.' },
-      { name: 'first', label: 'Primeiro vencimento', type: 'date', required: true },
-      { name: 'method', label: 'Forma de pagamento', type: 'select', options: PAYMENT_METHODS.map((m) => ({ value: m, label: m || '—' })) },
+      { name: 'day', label: 'Dia do pagamento', type: 'number', min: 1, max: 31, required: true, hint: 'Nos meses mais curtos, cai no último dia.' },
+      { name: 'start', label: 'Mês da 1ª parcela', type: 'select', options: months, full: true },
+      { name: 'entry', label: 'Entrada / sinal (opcional)', type: 'money', hint: 'Sai do valor e vira um pagamento à parte.' },
+      { name: 'entryDate', label: 'Data da entrada', type: 'date' },
+      { name: 'method', label: 'Forma de pagamento', type: 'select', full: true, options: PAYMENT_METHODS.map((m) => ({ value: m, label: m || '—' })) },
     ],
     submitLabel: 'Gerar',
     onSubmit: async (d) => {
       const count = Math.round(d.count);
       if (!(count >= 1 && count <= 60)) throw new Error('Informe de 1 a 60 parcelas.');
+      const day = Math.round(d.day);
+      if (!(day >= 1 && day <= 31)) throw Object.assign(new Error('O dia do pagamento vai de 1 a 31.'), { field: 'day' });
       const totalC = Math.round(d.total * 100);
       const entryC = Math.round((d.entry || 0) * 100);
-      if (totalC <= 0) throw new Error('Informe o valor total.');
-      if (entryC >= totalC) throw new Error('A entrada deve ser menor que o total.');
+      if (totalC <= 0) throw new Error('Informe o valor a parcelar.');
+      if (entryC >= totalC) throw new Error('A entrada deve ser menor que o valor a parcelar.');
+      if (entryC > 0 && !d.entryDate) throw Object.assign(new Error('Informe a data da entrada.'), { field: 'entryDate' });
+      const [y, m] = d.start.split('-').map(Number);
       const list = [];
-      if (entryC > 0) list.push({ vendorId: vendor.id, description: 'Entrada / sinal', amount: entryC / 100, dueDate: d.first, method: d.method, paid: false });
+      if (entryC > 0) list.push({ vendorId: vendor.id, description: 'Entrada / sinal', amount: entryC / 100, dueDate: d.entryDate, method: d.method, paid: false });
       const rest = totalC - entryC;
       const each = Math.floor(rest / count);
       for (let i = 0; i < count; i++) {
-        const amt = i === count - 1 ? rest - each * (count - 1) : each;
         list.push({
           vendorId: vendor.id,
           description: `Parcela ${i + 1}/${count}`,
-          amount: amt / 100,
-          dueDate: shiftISO(d.first, { m: entryC > 0 ? i + 1 : i }),
+          amount: (i === count - 1 ? rest - each * (count - 1) : each) / 100,
+          dueDate: dayInMonth(y, m - 1 + i, day),
           method: d.method,
           paid: false,
         });
       }
-      await bulkCreate('payments', list);
-      toast(`${list.length} parcelas criadas`);
+      const created = await bulkCreate('payments', list);
+      toast(`${list.length} ${list.length === 1 ? 'pagamento criado' : 'pagamentos criados'}`);
+      const upcoming = created.filter(isUpcoming);
+      if (upcoming.length) setTimeout(() => calendarDialog(upcoming, { intro: 'Parcelas criadas. Quer colocar na sua agenda, com aviso antes de cada vencimento?' }), 250);
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Pagamentos na agenda (Calendário da Apple, Outlook e Google Agenda)
+// ---------------------------------------------------------------------------
+// Cópia avulsa: a agenda não acompanha mudanças feitas depois no app.
+export const isUpcoming = (p) => !p.paid && !!p.dueDate && p.dueDate >= todayISO();
+
+function paymentTitle(p) {
+  const vendor = p.vendorId ? byId('vendors', p.vendorId)?.name : '';
+  return `Pagar ${vendor ? `${vendor}: ` : ''}${p.description || 'pagamento'} (${money(p.amount)})`;
+}
+function googleLink(p) {
+  const vendor = p.vendorId ? byId('vendors', p.vendorId)?.name : '';
+  const details = [
+    vendor && `Fornecedor: ${vendor}`,
+    `Valor: ${money(p.amount)}`,
+    p.method && `Forma de pagamento: ${p.method}`,
+    p.notes && `Observações: ${p.notes}`,
+    `\nDepois de pagar, marque como pago no BRIDEx: ${location.origin}/#/orcamento?pagamentos`,
+  ].filter(Boolean).join('\n');
+  const d = (iso) => iso.replace(/-/g, '');
+  const q = new URLSearchParams({ action: 'TEMPLATE', text: paymentTitle(p), dates: `${d(p.dueDate)}/${d(shiftISO(p.dueDate, { d: 1 }))}`, details });
+  return `https://calendar.google.com/calendar/render?${q}`;
+}
+
+// Abre o arquivo .ics: no iPhone aparece "Adicionar ao Calendário"; no computador, o arquivo é baixado.
+async function openCalendarFile(list) {
+  const { url } = await api('POST', '/api/calendar/link', { ids: list.map((p) => p.id) });
+  const standalone = window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone;
+  // No app instalado na tela de início, o arquivo precisa abrir no navegador.
+  if (!(standalone && window.open(url, '_blank'))) location.href = url;
+}
+
+export function calendarDialog(payments, { intro } = {}) {
+  const list = payments.filter((p) => p.dueDate).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  if (!list.length) { toast('Nenhum pagamento a vencer para colocar na agenda.'); return; }
+  const n = list.length;
+  const all = n === 1 ? 'este pagamento' : `os ${n} pagamentos`;
+  openModal({
+    title: 'Adicionar à agenda',
+    size: 'lg',
+    body: html`
+      <p class="form-intro">${intro || ''} Cada pagamento vira um evento no dia do vencimento${n > 1 ? `, de ${fmtDate(list[0].dueDate)} a ${fmtDate(list[n - 1].dueDate)}` : ` (${fmtDate(list[0].dueDate)})`}.</p>
+      <div class="cal-opts">
+        <div class="cal-opt">
+          <h3>iPhone, Mac ou Outlook</h3>
+          <p class="muted small">Coloca ${all} de uma vez, com aviso na véspera e no dia, às 9h. No iPhone, toque em "Adicionar tudo".</p>
+          <button type="button" class="btn btn-primary btn-sm" data-act="ics">${icon('calendar')}<span>Adicionar ${n === 1 ? '' : 'todos'}</span></button>
+        </div>
+        <div class="cal-opt">
+          <h3>Google Agenda</h3>
+          <p class="muted small">${n === 1 ? 'Abre o evento pronto no Google: é só salvar.' : html`Use o botão "Google" de cada parcela abaixo e salve. Para colocar todos de uma vez, baixe o arquivo e, no computador, importe em calendar.google.com › Configurações › Importar e exportar.`}</p>
+          ${n === 1
+            ? html`<a class="btn btn-ghost btn-sm" href="${googleLink(list[0])}" target="_blank" rel="noopener" data-act="link">${icon('calendar')}<span>Abrir no Google</span></a>`
+            : html`<button type="button" class="btn btn-ghost btn-sm" data-act="ics">${icon('download')}<span>Baixar arquivo</span></button>`}
+        </div>
+      </div>
+      ${n > 1 ? html`<div class="list cal-list">${list.map((p) => html`<div class="row">
+        <div class="row-main"><div class="row-title">${p.description}</div>
+          <div class="row-meta"><span>${icon('calendar')} ${fmtDate(p.dueDate)}</span>${p.vendorId && byId('vendors', p.vendorId) ? html`<span>${byId('vendors', p.vendorId).name}</span>` : ''}<span>${money(p.amount)}</span></div>
+        </div>
+        <div class="row-actions">
+          <button type="button" class="btn btn-ghost btn-sm" data-act="ics-one" data-id="${p.id}" title="iPhone, Mac ou Outlook">Apple</button>
+          <a class="btn btn-ghost btn-sm" href="${googleLink(p)}" target="_blank" rel="noopener" data-act="link">Google</a>
+        </div>
+      </div>`)}</div>` : ''}
+      <p class="hint">${icon('alert')} A agenda guarda uma cópia: se você mudar a data ou o valor aqui depois, apague o evento antigo e adicione de novo. No Google, o aviso segue o padrão de notificação da sua agenda.</p>`,
+    onMount(m) {
+      m.body.onclick = (e) => {
+        const a = e.target.closest('[data-act]');
+        if (!a || a.dataset.act === 'link') return;
+        if (a.dataset.act === 'ics') run(() => openCalendarFile(list));
+        if (a.dataset.act === 'ics-one') run(() => openCalendarFile(list.filter((p) => p.id === a.dataset.id)));
+      };
     },
   });
 }

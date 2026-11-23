@@ -609,7 +609,7 @@ button.link-more { border: 0; background: none; padding: 4px 0; cursor: pointer;
 .vd-section .list { border: 1px solid var(--line); border-radius: var(--radius); }
 .sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .sec-head h3 { margin: 0; }
-.sec-actions { display: flex; gap: 6px; }
+.sec-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
 /* ---------- Orçamento ---------- */
 .budget-row .row-main { display: grid; gap: 6px; }
@@ -1058,3 +1058,11 @@ a.auth-back:hover { color: var(--bx-gold); }
 .auth .auth-or { color: rgba(243, 239, 230, .55); }
 .auth .auth-or::before, .auth .auth-or::after { background: rgba(243, 239, 230, .18); }
 .auth .g-terms { color: rgba(243, 239, 230, .6); }
+
+/* Pagamentos na agenda */
+.cal-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.cal-opt { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 14px; display: grid; gap: 8px; align-content: start; justify-items: start; }
+.cal-opt h3 { margin: 0; font-size: 15px; }
+.cal-opt p { margin: 0; }
+.cal-list { margin-bottom: 8px; }
+.cal-list .row-actions { gap: 6px; }

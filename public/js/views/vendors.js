@@ -1,7 +1,7 @@
 import { state, create, update, remove, byId, emit } from '../store.js';
 import { html, icon, pageHead, chips, searchBox, empty, formModal, openModal, toast, money, moneyShort, fmtDate, todayISO, progress, badge, run, norm, sum, plural, downloadCSV, csvMoney, confirmDialog } from '../ui.js';
 import { VENDOR_STATUS, vendorStatus, vendorCategoryOptions, paymentsOf, paidOf, filesOf, missingCategories } from '../domain.js';
-import { paymentForm, installmentsForm, togglePaid, fileRow, fileEditForm, uploadMany, contactLinks, stars } from '../forms.js';
+import { paymentForm, installmentsForm, calendarDialog, isUpcoming, togglePaid, fileRow, fileEditForm, uploadMany, contactLinks, stars } from '../forms.js';
 
 const ui = { status: 'todos', cat: '', q: '', missingOpen: true, showSkipped: false, popCat: '' };
 
@@ -118,6 +118,7 @@ export function openVendor(id) {
         <section class="vd-section">
           <div class="sec-head"><h3>Pagamentos</h3>
             <div class="sec-actions">
+              ${pays.some(isUpcoming) ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="cal" title="Adicionar à agenda">${icon('calendar')}<span>Agenda</span></button>` : ''}
               ${price ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="gen">Gerar parcelas</button>` : ''}
               <button type="button" class="btn btn-ghost btn-sm" data-act="addpay">${icon('plus')}<span>Pagamento</span></button>
             </div>
@@ -161,6 +162,7 @@ export function openVendor(id) {
             }
             break;
           case 'gen': installmentsForm(v); break;
+          case 'cal': calendarDialog(paymentsOf(id).filter(isUpcoming)); break;
           case 'addpay': paymentForm({}, { vendorId: id }); break;
           case 'editpay': paymentForm(state.items.payments.find((p) => p.id === pid)); break;
           case 'paytoggle': run(() => togglePaid(state.items.payments.find((p) => p.id === pid), a.checked)); break;
