@@ -1,20 +1,21 @@
 // Telas da assessoria: só consulta. O servidor já entrega apenas o que a assessoria pode ver
-// (fornecedores sem valores, contratos e documentos, convidados, mesas, cronograma) e recusa qualquer gravação.
-import { state, emit, byId } from '../store.js';
+// (fornecedores sem valores, contratos e documentos, convidados, mesas, cronograma) e recusa qualquer gravação,
+// exceto as anotações da assessoria para os noivos.
+import { state, emit, byId, create, update, remove } from '../store.js';
 import {
   html, icon, pageHead, chips, searchBox, empty, openModal, norm, plural, sum, badge, initials, downloadCSV,
-  selectOptions, fmtDate, fmtDateLong, fmtSize, daysBetween, todayISO, getTheme, applyTheme,
+  selectOptions, fmtDate, fmtDateLong, fmtDateTime, fmtSize, daysBetween, todayISO, getTheme, applyTheme, formModal, toast, run,
 } from '../ui.js';
 import {
   coupleTitle, VENDOR_STATUS, vendorStatus, RSVP, FILE_CATEGORIES, IMAGE_EXT, fileCategory, sideOptions, sideLabel,
-  guestPeople, waLink, mapsLink, missingCategories, contractedVendors, filesOf,
+  guestPeople, waLink, mapsLink, missingCategories, contractedVendors, filesOf, userName,
 } from '../domain.js';
 import { contactLinks, stars, fileUrl } from '../forms.js';
 import { accountForm, passwordForm, devicesDialog, leaveWorkspace, deleteMyAccount } from './settings.js';
 
 const PLANNER_CATS = new Set(['contrato', 'documento', 'inspiracao', 'outros']);
 const sortKey = (t) => { const h = String(t.time || '99:99'); return (h < '06:00' ? '2' : '1') + h; };
-const readonlyNote = html`<p class="ro-note">${icon('shield')}<span>Acesso de assessoria: somente consulta. Alterações são feitas pelos noivos.</span></p>`;
+const readonlyNote = html`<p class="ro-note">${icon('shield')}<span>Acesso de assessoria: somente consulta. Para pedir uma mudança, deixe uma <a href="#/anotacoes" class="link">anotação para os noivos</a>.</span></p>`;
 
 function fileRow(f, { showVendor = true } = {}) {
   const vendor = f.vendorId ? byId('vendors', f.vendorId) : null;
@@ -135,6 +136,11 @@ const overview = {
             </div>
             ${s.overview ? html`<blockquote class="vision">${s.overview}</blockquote>` : ''}
             ${!s.ceremonyPlace && !s.receptionPlace && !s.style && !s.overview ? html`<p class="muted pad">Os noivos ainda não preencheram os detalhes do casamento.</p>` : ''}
+          </section>
+          <section class="card">
+            <header class="card-head"><h2>Anotações para os noivos</h2><a href="#/anotacoes" class="link-more">Ver todas ${icon('chevron')}</a></header>
+            ${I.notes.length ? html`<div class="mini-notes">${[...I.notes].sort((a, b) => (b._updated || 0) - (a._updated || 0)).slice(0, 3).map((n) => html`<a href="#/anotacoes" class="mini-note note-${n.color || 'creme'}"><strong>${n.title || 'Sem título'}</strong><p>${String(n.body || '').slice(0, 160)}</p></a>`)}</div>`
+              : html`<div class="pad"><p class="muted small">Recados, pendências e lembretes que você deixar aqui aparecem para os noivos.</p><a href="#/anotacoes" class="btn btn-ghost btn-sm">${icon('plus')}<span>Escrever anotação</span></a></div>`}
           </section>
           ${missing.length ? html`<section class="card">
             <header class="card-head"><h2>Ainda falta contratar</h2></header>
@@ -324,6 +330,63 @@ const documents = {
 };
 
 // ---------------------------------------------------------------------------
+// Anotações para os noivos (a única coisa que a assessoria escreve)
+// ---------------------------------------------------------------------------
+const NOTE_COLORS = [
+  { value: 'creme', label: 'Creme' }, { value: 'rosa', label: 'Rosa' }, { value: 'salvia', label: 'Sálvia' },
+  { value: 'azul', label: 'Azul' }, { value: 'lilas', label: 'Lilás' }, { value: 'areia', label: 'Areia' },
+];
+function noteForm(n = {}) {
+  formModal({
+    title: n.id ? 'Editar anotação' : 'Anotação para os noivos',
+    size: 'lg',
+    intro: n.id ? '' : 'Os noivos veem esta anotação nas Anotações deles, marcada como da assessoria.',
+    values: { color: 'creme', ...n },
+    fields: [
+      { name: 'title', label: 'Título', full: true, placeholder: 'Ex.: Pendências da semana' },
+      { name: 'body', label: 'Anotação', type: 'textarea', full: true, rows: 10, placeholder: 'Recados, pendências, decisões da reunião, lembretes…' },
+      { name: 'color', label: 'Cor', type: 'select', options: NOTE_COLORS },
+      { name: 'pinned', label: 'Destacar na visão geral dos noivos', type: 'checkbox' },
+    ],
+    onSubmit: async (d) => {
+      if (!d.title && !d.body) throw new Error('Escreva um título ou um texto.');
+      if (n.id) await update('notes', n.id, d); else await create('notes', d);
+      toast(n.id ? 'Anotação salva' : 'Anotação enviada aos noivos');
+    },
+    onDelete: n.id ? async () => { await remove('notes', n.id); toast('Anotação excluída'); } : null,
+  });
+}
+const nui = { q: '' };
+const notes = {
+  render() {
+    const all = state.items.notes;
+    const q = norm(nui.q.trim());
+    const list = all.filter((n) => !q || norm(`${n.title} ${n.body}`).includes(q))
+      .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b._updated || 0) - (a._updated || 0));
+    return html`
+      ${pageHead('Anotações para os noivos', 'Recados, pendências e lembretes que os noivos veem', html`<button type="button" class="btn btn-primary" data-act="add">${icon('plus')}<span>Anotação</span></button>`)}
+      ${all.length ? html`<div class="toolbar">${searchBox('q-pnotes', nui.q, 'Buscar nas anotações…')}</div>` : ''}
+      ${!all.length ? empty('note', 'Nenhuma anotação ainda', 'Escreva pendências, resumos de reunião e lembretes. Os noivos veem tudo nas Anotações deles; as anotações pessoais do casal continuam privadas.', html`<button type="button" class="btn btn-primary" data-act="add">${icon('plus')}<span>Escrever anotação</span></button>`)
+        : !list.length ? empty('search', 'Nada encontrado', '')
+        : html`<div class="notes-grid">${list.map((n) => html`<article class="note note-${n.color || 'creme'}" data-act="edit" data-id="${n.id}" tabindex="0">
+          <header>${n.title ? html`<h3>${n.title}</h3>` : ''}${n.pinned ? html`<span class="pin on" title="Destacada para os noivos">${icon('star')}</span>` : ''}</header>
+          ${n.body ? html`<p class="prewrap">${n.body}</p>` : ''}
+          <footer>${fmtDateTime(n._updated)}${userName(n._by) ? ` · ${userName(n._by)}` : ''}</footer>
+        </article>`)}</div>`}`;
+  },
+  mount(el) {
+    el.onclick = (e) => {
+      const a = e.target.closest('[data-act]');
+      if (!a) return;
+      if (a.dataset.act === 'add') noteForm();
+      else if (a.dataset.act === 'edit') noteForm(state.items.notes.find((x) => x.id === a.dataset.id));
+    };
+    el.onkeydown = (e) => { if (e.key === 'Enter' && e.target.matches('.note')) noteForm(state.items.notes.find((x) => x.id === e.target.dataset.id)); };
+    el.oninput = (e) => { if (e.target.id === 'q-pnotes') { nui.q = e.target.value; emit(); } };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Configurações do perfil de assessoria
 // ---------------------------------------------------------------------------
 const settings = {
@@ -336,7 +399,7 @@ const settings = {
           <header class="card-head"><h2>${icon('user')} Perfil de assessoria</h2></header>
           <div class="list">
             <div class="row clickable" data-act="account"><div class="row-main"><div class="row-title">${state.user.name}</div><div class="row-meta"><span>${state.user.email || 'sem e-mail'}</span></div></div>${icon('edit')}</div>
-            <div class="row clickable" data-act="password"><div class="row-main"><div class="row-title">Alterar senha</div></div>${icon('chevron')}</div>
+            <div class="row clickable" data-act="password"><div class="row-main"><div class="row-title">${state.user.hasPassword === false ? 'Criar senha' : 'Alterar senha'}</div>${state.user.google ? html`<div class="row-meta"><span>Conectado ao Google${state.user.hasPassword === false ? ': entra sem senha' : ''}</span></div>` : ''}</div>${icon('chevron')}</div>
             <div class="row clickable" data-act="devices"><div class="row-main"><div class="row-title">Dispositivos conectados</div><div class="row-meta"><span>Veja onde seu perfil está aberto</span></div></div>${icon('chevron')}</div>
           </div>
         </section>
@@ -352,7 +415,8 @@ const settings = {
             <li>Visão geral do casamento, locais e roteiro do dia.</li>
             <li>Fornecedores com contatos, contratos e documentos.</li>
             <li>Lista de convidados e confirmações.</li>
-            <li>Somente consulta: quem cadastra, edita e convida pessoas são os noivos. Orçamento, pagamentos e anotações ficam só com eles.</li>
+            <li>Anotações para os noivos: recados e pendências que eles veem.</li>
+            <li>Fora isso, somente consulta: quem cadastra, edita e convida pessoas são os noivos. Orçamento, pagamentos e as anotações pessoais do casal ficam só com eles.</li>
           </ul>
         </section>
         <section class="card">
@@ -387,6 +451,7 @@ export const PLANNER_ROUTES = [
   { id: 'convidados', label: 'Convidados', icon: 'users', view: guests },
   { id: 'cronograma', label: 'Cronograma do dia', short: 'Cronograma', icon: 'clock', view: timeline },
   { id: 'documentos', label: 'Contratos e documentos', short: 'Contratos', icon: 'file', view: documents },
+  { id: 'anotacoes', label: 'Anotações para os noivos', short: 'Anotações', icon: 'note', view: notes },
   { id: 'config', label: 'Meu perfil', icon: 'settings', view: settings },
 ];
 export const PLANNER_TABS = ['inicio', 'fornecedores', 'convidados', 'documentos'];

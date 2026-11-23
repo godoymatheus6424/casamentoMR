@@ -29,6 +29,18 @@ const SIGNUP_OPEN = process.env.SIGNUP_OPEN === '1';
 // para contas novas. No login com e-mail repetido, entra a conta cuja senha confere (a mais recente primeiro).
 const UNIQUE_EMAIL = process.env.UNIQUE_EMAIL === '1';
 const APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
+// Login com o Google: GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET. Rodando no computador, também lê o arquivo
+// client_secret_*.json baixado do Google Cloud, se estiver na pasta do projeto (fica fora do git e do Docker).
+const GOOGLE = (() => {
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+    return { id: process.env.GOOGLE_CLIENT_ID.trim(), secret: process.env.GOOGLE_CLIENT_SECRET.trim() };
+  }
+  try {
+    const f = fs.readdirSync(ROOT).find((n) => /^client_secret_.*\.json$/.test(n));
+    const w = f && JSON.parse(fs.readFileSync(path.join(ROOT, f), 'utf8')).web;
+    return w?.client_id && w?.client_secret ? { id: w.client_id, secret: w.client_secret } : null;
+  } catch { return null; }
+})();
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 25;
 const MAX_UPLOAD = MAX_UPLOAD_MB * 1024 * 1024;
 const QUOTA_MB = Number(process.env.QUOTA_MB) || 1024;
@@ -48,10 +60,15 @@ const LOCK_TIME = 15 * MIN;
 
 const COLLECTIONS = new Set(['vendors', 'payments', 'budget', 'tasks', 'guests', 'tables', 'timeline', 'gifts', 'notes']);
 const FILE_CATEGORIES = new Set(['contrato', 'orcamento', 'comprovante', 'inspiracao', 'documento', 'outros']);
-// Assessoria: só consulta. Vê fornecedores (com contatos), contratos e documentos, convidados, mesas e cronograma.
+// Assessoria: só consulta (a única escrita são as anotações para os noivos). Vê fornecedores (com contatos), contratos e documentos, convidados, mesas e cronograma.
 // Nada financeiro (orçamento, pagamentos, valores, comprovantes) e nada pessoal dos noivos (tarefas, anotações, presentes).
 const PLANNER_FILE_CATS = new Set(['contrato', 'documento', 'inspiracao', 'outros']);
-const PLANNER_READONLY = 'O acesso da assessoria é só para consulta. Para mudar algo, fale com os noivos.';
+const PLANNER_READONLY = 'O acesso da assessoria é só para consulta (e anotações para os noivos). Para mudar algo, fale com os noivos.';
+// A assessoria escreve anotações para os noivos: cria, edita e exclui só as anotações da assessoria.
+function checkPlannerNote(session, coll, row) {
+  if (session.role !== 'planner') return;
+  if (coll !== 'notes' || (row && !JSON.parse(row.data).fromPlanner)) throw new HttpError(403, PLANNER_READONLY);
+}
 // Código de acesso da assessoria: 8 caracteres sem os que confundem (0/O, 1/I/L), mostrado como XXXX-XXXX.
 const CODE_ABC = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const fmtCode = (c) => `${c.slice(0, 4)}-${c.slice(4)}`;
@@ -196,6 +213,9 @@ async function verifyPassword(pw, stored) {
   return expected.length === key.length && crypto.timingSafeEqual(expected, key);
 }
 const DUMMY_HASH = await hashPassword(crypto.randomBytes(16).toString('hex'));
+// Conta criada pelo Google: sem senha (nunca confere com nenhuma). A pessoa pode criar uma senha depois.
+const NO_PASSWORD = '!sem-senha';
+const hasPassword = (hash) => !String(hash || '').startsWith('!');
 
 function validatePassword(pw) {
   if (typeof pw !== 'string' || pw.length < 8) throw new HttpError(400, 'A senha deve ter pelo menos 8 caracteres.');
@@ -312,7 +332,8 @@ function cleanData(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'Dados inválidos.');
   const out = {};
   for (const [k, v] of Object.entries(input)) {
-    if (k === 'id' || k === '__proto__' || k.startsWith('_') || k.length > 64) continue;
+    // fromPlanner é definido só pelo servidor (anotação escrita pela assessoria).
+    if (k === 'id' || k === '__proto__' || k === 'fromPlanner' || k.startsWith('_') || k.length > 64) continue;
     out[k] = v;
   }
   if (JSON.stringify(out).length > 200_000) throw new HttpError(413, 'Registro muito grande.');
@@ -367,6 +388,7 @@ function plannerData(items, files, settings) {
   out.guests = items.guests;
   out.tables = items.tables;
   out.timeline = items.timeline;
+  out.notes = items.notes.filter((n) => n.fromPlanner); // só as anotações da assessoria
   // Só os nomes das categorias, para mostrar o que ainda falta contratar.
   out.budget = items.budget.map((b) => ({ id: b.id, name: b.name, order: b.order, skip: b.skip }));
   const { budgetTotal, ...st } = settings;
@@ -374,10 +396,10 @@ function plannerData(items, files, settings) {
 }
 
 // Cria usuário + espaço do casal + modelos iniciais. Chamar dentro de tx().
-function createAccount({ name, email, hash, partner1, partner2, date, plan }) {
+function createAccount({ name, email, hash, partner1, partner2, date, plan, googleSub = null }) {
   const now = Date.now();
-  const r = S('INSERT INTO users (username, email, name, pass_hash, terms_accepted_at, created_at) VALUES (?,?,?,?,?,?)')
-    .run(uniqueUsername(email), email, name, hash, now, now);
+  const r = S('INSERT INTO users (username, email, name, pass_hash, google_sub, terms_accepted_at, created_at) VALUES (?,?,?,?,?,?,?)')
+    .run(uniqueUsername(email), email, name, hash, googleSub, now, now);
   const userId = Number(r.lastInsertRowid);
   const settings = {
     partner1: String(partner1 || '').trim().slice(0, 60),
@@ -477,13 +499,14 @@ function route(method, pattern, handler, opts = {}) {
   const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '([^/]+)'; }) + '$');
   const auth = opts.auth !== false;
   // ws: a rota precisa de um casamento aberto (a assessoria pode estar conectada sem nenhum).
-  routes.push({ method, re, keys, handler, auth, ws: auth && opts.ws !== false, write: !!opts.write, team: !!opts.team, owner: !!opts.owner, manage: !!opts.manage });
+  routes.push({ method, re, keys, handler, auth, ws: auth && opts.ws !== false, write: !!opts.write, team: !!opts.team, plannerNotes: !!opts.plannerNotes, owner: !!opts.owner, manage: !!opts.manage });
 }
 
 route('GET', '/api/status', ({ res }) => {
   send(res, 200, {
     needsSetup: !SIGNUP_OPEN && userCount() === 0,
     signupOpen: SIGNUP_OPEN,
+    google: !!GOOGLE,
     maxUploadMb: MAX_UPLOAD_MB,
     trialDays: TRIAL_DAYS,
     pricing: PRICING,
@@ -551,6 +574,140 @@ route('POST', '/api/login', async ({ req, res }) => {
   send(res, 200, { ok: true });
 }, { auth: false });
 
+// ---------------------------------------------------------------------------
+// Login com o Google (OAuth 2.0 com PKCE). A aba escolhida define o tipo de conta (noivos ou assessoria).
+// Primeira vez: cria a conta sem senha. Já existe conta do mesmo tipo com o mesmo e-mail: liga o Google a ela.
+// ---------------------------------------------------------------------------
+const googleStates = new Map(); // state -> { verifier, nonce, kind, invite, exp }
+const googleRedirect = (req) => `${appUrl(req)}/api/auth/google/callback`;
+function stateCookie(req, value, maxAge) {
+  const parts = [`gst=${value}`, 'Path=/api/auth/google', 'HttpOnly', 'SameSite=Lax', `Max-Age=${maxAge}`];
+  if (isHttps(req)) parts.push('Secure');
+  return parts.join('; ');
+}
+function redirect(res, location, headers = {}) {
+  res.writeHead(302, { Location: location, 'Cache-Control': 'no-store', ...headers });
+  res.end();
+}
+function accountAuth(userId) {
+  const u = S('SELECT pass_hash, google_sub FROM users WHERE id = ?').get(userId);
+  return { hasPassword: hasPassword(u?.pass_hash), google: !!u?.google_sub };
+}
+
+route('GET', '/api/auth/google/start', ({ req, res, url }) => {
+  if (!GOOGLE) throw new HttpError(404, 'Login com o Google não configurado.');
+  rateBucket(`gstart:${clientIp(req)}`, 40).n++;
+  const now = Date.now();
+  for (const [k, v] of googleStates) if (v.exp < now) googleStates.delete(k);
+  const state = crypto.randomBytes(24).toString('base64url');
+  const verifier = crypto.randomBytes(32).toString('base64url');
+  const nonce = crypto.randomBytes(16).toString('base64url');
+  const invite = String(url.searchParams.get('invite') || '').slice(0, 100);
+  googleStates.set(state, { verifier, nonce, kind: url.searchParams.get('kind') === 'planner' ? 'planner' : 'couple', invite, exp: now + 10 * MIN });
+  const q = new URLSearchParams({
+    client_id: GOOGLE.id, redirect_uri: googleRedirect(req), response_type: 'code', scope: 'openid email profile',
+    state, nonce, prompt: 'select_account',
+    code_challenge: crypto.createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256',
+  });
+  redirect(res, `https://accounts.google.com/o/oauth2/v2/auth?${q}`, { 'Set-Cookie': stateCookie(req, state, 600) });
+}, { auth: false });
+
+route('GET', '/api/auth/google/callback', async ({ req, res, url }) => {
+  const state = String(url.searchParams.get('state') || '');
+  const st = googleStates.get(state);
+  googleStates.delete(state);
+  const back = (code, kind = st?.kind, invite = st?.invite) => redirect(res,
+    invite ? `/#/convite?token=${encodeURIComponent(invite)}&erro=${code}` : `/#/entrar?${kind === 'planner' ? 'perfil=assessoria&' : ''}erro=${code}`,
+    { 'Set-Cookie': stateCookie(req, '', 0) });
+  // O state precisa ser o mesmo guardado neste navegador: impede que alguém "logue" você na conta dele.
+  if (!GOOGLE || !st || st.exp < Date.now() || !safeEqual(parseCookies(req).gst || '', state)) return back('google_falhou');
+  if (url.searchParams.get('error') || !url.searchParams.get('code')) return back('google_cancelado');
+
+  let claims;
+  try {
+    const r = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code: url.searchParams.get('code'), client_id: GOOGLE.id, client_secret: GOOGLE.secret,
+        redirect_uri: googleRedirect(req), grant_type: 'authorization_code', code_verifier: st.verifier,
+      }),
+    });
+    const tok = await r.json();
+    if (!r.ok || !tok.id_token) throw new Error(tok.error || 'sem id_token');
+    // O id_token veio direto do Google (HTTPS, com a nossa chave secreta): basta conferir os campos.
+    claims = JSON.parse(Buffer.from(tok.id_token.split('.')[1], 'base64url').toString('utf8'));
+  } catch (e) {
+    console.error('Login com o Google falhou:', e.message);
+    return back('google_falhou');
+  }
+  const okIss = claims.iss === 'https://accounts.google.com' || claims.iss === 'accounts.google.com';
+  if (!okIss || claims.aud !== GOOGLE.id || claims.exp * 1000 < Date.now() || claims.nonce !== st.nonce || !claims.sub) return back('google_falhou');
+  if (!claims.email || claims.email_verified !== true) return back('google_email');
+
+  const sub = String(claims.sub);
+  const email = normEmail(claims.email);
+  const name = String(claims.name || claims.given_name || email.split('@')[0]).trim().slice(0, 60);
+  const now = Date.now();
+  let userId = null, ws = null;
+
+  // Convite do par/família (ou de assessoria antigo) pelo Google: sempre uma conta nova para esse casamento,
+  // ou o perfil de assessoria já ligado a este Google.
+  if (st.invite) {
+    const inv = findInvite(st.invite);
+    if (!inv) return back('convite_invalido');
+    const kind = inv.role === 'planner' ? 'planner' : 'couple';
+    const linked = S('SELECT id, kind FROM users WHERE google_sub = ?').get(sub);
+    if (linked && !(kind === 'planner' && linked.kind === 'planner')) return back('google_ja_ligado');
+    try {
+      tx(() => {
+        userId = linked ? linked.id : Number(S('INSERT INTO users (username, email, name, pass_hash, kind, google_sub, terms_accepted_at, created_at) VALUES (?,?,?,?,?,?,?,?)')
+          .run(uniqueUsername(email), email, name, NO_PASSWORD, kind, sub, now, now).lastInsertRowid);
+        const used = S('UPDATE invites SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL').run(now, userId, inv.id);
+        if (!used.changes) throw new HttpError(404, INVALID_INVITE);
+        if (!S('SELECT 1 FROM memberships WHERE user_id = ? AND workspace_id = ?').get(userId, inv.workspace_id)) {
+          const n = S('SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ?').get(inv.workspace_id).n;
+          if (n >= MAX_MEMBERS) throw new HttpError(400, 'limite');
+          S('INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, ?, ?, ?)').run(userId, inv.workspace_id, inv.role, now);
+        }
+        S('UPDATE users SET last_workspace_id = ? WHERE id = ?').run(inv.workspace_id, userId);
+      });
+    } catch (e) {
+      return back(e.message === 'limite' ? 'convite_limite' : 'convite_invalido');
+    }
+    createSession(req, res, userId, true, inv.workspace_id);
+    res.setHeader('Set-Cookie', [res.getHeader('Set-Cookie'), stateCookie(req, '', 0)]);
+    return redirect(res, '/#/inicio');
+  }
+
+  const kind = st.kind;
+  let user = S('SELECT * FROM users WHERE google_sub = ?').get(sub);
+  if (user && user.kind !== kind) return back(user.kind === 'planner' ? 'google_e_assessoria' : 'google_e_noivos');
+  if (!user) {
+    // Conta já existente com este e-mail (o Google confirmou o e-mail): liga o Google a ela.
+    user = S('SELECT * FROM users WHERE email = ? COLLATE NOCASE AND kind = ? AND google_sub IS NULL ORDER BY id DESC LIMIT 1').get(email, kind);
+    if (user) S('UPDATE users SET google_sub = ?, failed = 0, locked_until = 0 WHERE id = ?').run(sub, user.id);
+  }
+  if (user) {
+    userId = user.id;
+    ws = defaultWorkspace(userId);
+    if (!ws && kind !== 'planner') return back('sem_casamento');
+  } else {
+    if (!SIGNUP_OPEN) return back('cadastro_fechado');
+    try { rateBucket(`signup:${clientIp(req)}`, 5).n++; } catch { return back('muitas_tentativas'); }
+    if (kind === 'planner') {
+      userId = Number(S("INSERT INTO users (username, email, name, pass_hash, kind, google_sub, terms_accepted_at, created_at) VALUES (?,?,?,?,'planner',?,?,?)")
+        .run(uniqueUsername(email), email, name, NO_PASSWORD, sub, now, now).lastInsertRowid);
+    } else {
+      const acc = tx(() => createAccount({ name, email, hash: NO_PASSWORD, plan: 'trial', googleSub: sub }));
+      userId = acc.userId; ws = acc.ws;
+    }
+  }
+  createSession(req, res, userId, true, ws);
+  res.setHeader('Set-Cookie', [res.getHeader('Set-Cookie'), stateCookie(req, '', 0)]);
+  redirect(res, '/#/inicio');
+}, { auth: false });
+
 route('POST', '/api/password/forgot', async ({ req, res }) => {
   const rl = rateBucket(`forgot:${clientIp(req)}`, 5);
   rl.n++;
@@ -606,7 +763,7 @@ route('GET', '/api/me', ({ req, res, session }) => {
   const headers = {};
   if (session.persistent) headers['Set-Cookie'] = sessionCookie(req, session.token, Math.floor(session.ttl / 1000));
   send(res, 200, {
-    user: { id: session.user_id, name: session.name, username: session.username, email: session.email, kind: session.kind },
+    user: { id: session.user_id, name: session.name, username: session.username, email: session.email, kind: session.kind, ...accountAuth(session.user_id) },
     csrf: session.csrf,
     workspace: session.workspace_id ? workspaceInfo(session) : null,
     workspaceCount: S('SELECT COUNT(*) AS n FROM memberships WHERE user_id = ?').get(session.user_id).n,
@@ -631,7 +788,10 @@ route('PUT', '/api/me', async ({ req, res, session }) => {
 route('DELETE', '/api/me', async ({ req, res, session }) => {
   const b = await readJson(req);
   const user = S('SELECT pass_hash FROM users WHERE id = ?').get(session.user_id);
-  if (!(await verifyPassword(String(b.password || ''), user.pass_hash))) throw new HttpError(400, 'Senha incorreta.');
+  // Sem senha (conta do Google): a confirmação é a palavra EXCLUIR, digitada na tela.
+  if (hasPassword(user.pass_hash) ? !(await verifyPassword(String(b.password || ''), user.pass_hash)) : String(b.confirm || '').trim().toUpperCase() !== 'EXCLUIR') {
+    throw new HttpError(400, hasPassword(user.pass_hash) ? 'Senha incorreta.' : 'Digite EXCLUIR para confirmar.');
+  }
   const own = S("SELECT w.name FROM memberships m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ? AND m.role = 'owner' LIMIT 1").get(session.user_id);
   if (own) throw new HttpError(400, `Você criou o casamento "${own.name}". Para apagar tudo, abra esse casamento e use "Excluir conta e todos os dados" em Configurações.`);
   S('DELETE FROM users WHERE id = ?').run(session.user_id); // acessos, sessões e links saem em cascata
@@ -641,7 +801,8 @@ route('DELETE', '/api/me', async ({ req, res, session }) => {
 route('POST', '/api/password', async ({ req, res, session }) => {
   const b = await readJson(req);
   const user = S('SELECT * FROM users WHERE id = ?').get(session.user_id);
-  if (!(await verifyPassword(String(b.current || ''), user.pass_hash))) throw new HttpError(400, 'A senha atual está incorreta.');
+  // Conta criada pelo Google ainda sem senha: cria a primeira sem pedir a atual.
+  if (hasPassword(user.pass_hash) && !(await verifyPassword(String(b.current || ''), user.pass_hash))) throw new HttpError(400, 'A senha atual está incorreta.');
   validatePassword(b.next);
   const hash = await hashPassword(b.next);
   S('UPDATE users SET pass_hash = ? WHERE id = ?').run(hash, user.id);
@@ -886,8 +1047,11 @@ route('PUT', '/api/settings', async ({ req, res, session }) => {
 
 route('POST', '/api/items/:coll', async ({ req, res, params, session }) => {
   const coll = checkColl(params.coll);
-  send(res, 201, insertItem(session.workspace_id, coll, cleanData(await readJson(req)), session.user_id));
-}, { write: true });
+  checkPlannerNote(session, coll);
+  const data = cleanData(await readJson(req));
+  if (session.role === 'planner') data.fromPlanner = true;
+  send(res, 201, insertItem(session.workspace_id, coll, data, session.user_id));
+}, { write: true, plannerNotes: true });
 
 route('POST', '/api/items/:coll/bulk', async ({ req, res, params, session }) => {
   const coll = checkColl(params.coll);
@@ -903,18 +1067,20 @@ route('PUT', '/api/items/:coll/:id', async ({ req, res, params, session }) => {
   if (!isUuid(params.id)) throw new HttpError(400, 'ID inválido.');
   const row = S('SELECT * FROM items WHERE id = ? AND coll = ? AND workspace_id = ?').get(params.id, coll, session.workspace_id);
   if (!row) throw new HttpError(404, 'Registro não encontrado (talvez tenha sido excluído).');
+  checkPlannerNote(session, coll, row);
   const merged = { ...JSON.parse(row.data), ...cleanData(await readJson(req)) };
   const data = JSON.stringify(merged);
   if (data.length > 200_000) throw new HttpError(413, 'Registro muito grande.');
   const now = Date.now();
   S('UPDATE items SET data = ?, updated_at = ?, updated_by = ? WHERE id = ? AND workspace_id = ?').run(data, now, session.user_id, params.id, session.workspace_id);
   send(res, 200, rowToItem({ ...row, data, updated_at: now, updated_by: session.user_id }));
-}, { write: true });
+}, { write: true, plannerNotes: true });
 
 route('DELETE', '/api/items/:coll/:id', ({ res, params, session }) => {
   const coll = checkColl(params.coll);
   if (!isUuid(params.id)) throw new HttpError(400, 'ID inválido.');
   const ws = session.workspace_id;
+  if (session.role === 'planner') checkPlannerNote(session, coll, S('SELECT data FROM items WHERE id = ? AND coll = ? AND workspace_id = ?').get(params.id, coll, ws) || { data: '{}' });
   let cascaded = false;
   tx(() => {
     const r = S('DELETE FROM items WHERE id = ? AND coll = ? AND workspace_id = ?').run(params.id, coll, ws);
@@ -931,7 +1097,7 @@ route('DELETE', '/api/items/:coll/:id', ({ res, params, session }) => {
     }
   });
   send(res, 200, { ok: true, cascaded });
-}, { write: true });
+}, { write: true, plannerNotes: true });
 
 // Arquivos
 route('POST', '/api/files', async ({ req, res, session }) => {
@@ -1043,7 +1209,10 @@ route('GET', '/api/export', ({ res, session }) => {
 route('DELETE', '/api/workspace', async ({ req, res, session }) => {
   const b = await readJson(req);
   const user = S('SELECT pass_hash FROM users WHERE id = ?').get(session.user_id);
-  if (!(await verifyPassword(String(b.password || ''), user.pass_hash))) throw new HttpError(400, 'Senha incorreta.');
+  // Sem senha (conta do Google): a confirmação é a palavra EXCLUIR, digitada na tela.
+  if (hasPassword(user.pass_hash) ? !(await verifyPassword(String(b.password || ''), user.pass_hash)) : String(b.confirm || '').trim().toUpperCase() !== 'EXCLUIR') {
+    throw new HttpError(400, hasPassword(user.pass_hash) ? 'Senha incorreta.' : 'Digite EXCLUIR para confirmar.');
+  }
   deleteWorkspace(session.workspace_id);
   send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
 }, { owner: true });
@@ -1102,7 +1271,7 @@ async function handleApi(req, res, url) {
     }
     if (r.owner && session.role !== 'owner') throw new HttpError(403, 'Só quem criou o casamento no planejador pode fazer isso.');
     if (r.manage && !MANAGER_ROLES.has(session.role)) throw new HttpError(403, 'Só os noivos podem gerenciar quem tem acesso.');
-    if ((r.write || r.team) && session.role === 'planner') throw new HttpError(403, PLANNER_READONLY);
+    if ((r.write || r.team) && session.role === 'planner' && !(r.plannerNotes && params.coll === 'notes')) throw new HttpError(403, PLANNER_READONLY);
     if (r.write && session.access !== 'full') {
       throw new HttpError(402, session.plan === 'trial'
         ? 'Seu período de teste terminou. Assine para continuar editando — seus dados continuam disponíveis para consulta e download.'

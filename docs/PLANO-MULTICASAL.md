@@ -15,7 +15,7 @@ Modelo de receita: assinatura **R$ 9,90/mês** ou **R$ 89/ano**, com **14 dias g
 | Limite de armazenamento por espaço | ✅ |
 | Tipos de acesso: **Noivo(a)**, **Assessoria** e **Família/amigo**. Só os noivos adicionam, removem ou mudam acessos | ✅ |
 | **Dois perfis independentes:** conta de noivos (e família) pertence a um único casamento e edita tudo; perfil de assessoria é separado (login com aba própria), acompanha vários casamentos e nunca vira conta de noivos, nem o contrário | ✅ |
-| **Assessoria só consulta:** visão geral, fornecedores com contatos, contratos e documentos, convidados e cronograma. Não cadastra, não edita, não faz anotações, não convida pessoas. Não recebe orçamento, pagamentos, valores, comprovantes, tarefas, anotações nem presentes (filtrado no servidor) | ✅ |
+| **Assessoria só consulta:** visão geral, fornecedores com contatos, contratos e documentos, convidados e cronograma. Não cadastra, não edita, não convida pessoas. A única escrita são as **anotações para os noivos** (marcadas como da assessoria; ela não vê as anotações do casal). Não recebe orçamento, pagamentos, valores, comprovantes, tarefas, anotações nem presentes (filtrado no servidor) | ✅ |
 | **Perfil da assessoria:** uma conta só, com acesso a vários casamentos e troca entre eles ("Meus casamentos"). Cada casamento tem um **código de acesso da assessoria** (só os noivos veem, em Configurações › Assessoria, e podem trocar); a assessora digita o código no próprio perfil. O par e a família entram por link de convite | ✅ |
 | Cadastro próprio da assessoria ("Criar conta → Sou assessora"): perfil sem casamento, que recebe os casamentos quando digita o código de cada casal | ✅ |
 | Convites por link, sem depender de e-mail: os noivos geram o link (vale 7 dias, uso único, pode ser cancelado) e mandam por WhatsApp; quem abre cria a própria conta ou entra na que já tem. Os noivos nunca definem a senha de ninguém | ✅ |
@@ -54,6 +54,7 @@ Modelo de receita: assinatura **R$ 9,90/mês** ou **R$ 89/ano**, com **14 dias g
 |---|---|
 | `SIGNUP_OPEN=1` | Libera o cadastro público. Sem ela, funciona como antes: um casamento, com código de configuração. |
 | `APP_URL=https://seu-dominio` | **Obrigatória em produção** para os links dos e-mails. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Liga o botão "Continuar com o Google" (OAuth com PKCE). Retorno: `APP_URL/api/auth/google/callback`. No computador, o servidor também lê o `client_secret_*.json` da pasta (fora do git). |
 | `RESEND_API_KEY`, `MAIL_FROM` | Envio de e-mails (ex.: `MAIL_FROM="Planejador <nao-responda@seudominio.com.br>"`). Sem elas, o link aparece só no log do servidor. |
 | `TRIAL_DAYS` | Dias de teste grátis (padrão 14). |
 | `QUOTA_MB` | Armazenamento por espaço (padrão 1024). |

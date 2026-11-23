@@ -1,8 +1,28 @@
 import { state, create, update, remove, emit } from '../store.js';
-import { html, icon, pageHead, searchBox, empty, formModal, toast, run, norm, fmtDateTime } from '../ui.js';
+import { html, icon, pageHead, searchBox, empty, formModal, openModal, toast, run, norm, fmtDateTime, chips, badge, confirmDialog } from '../ui.js';
 import { userName } from '../domain.js';
 
-const ui = { q: '' };
+const ui = { q: '', from: 'todas' };
+
+// Anotação escrita pela assessoria: os noivos leem, fixam ou excluem (o texto é da assessoria).
+function plannerNote(n) {
+  openModal({
+    title: n.title || 'Anotação da assessoria',
+    size: 'lg',
+    body: html`<p class="muted small">${badge('Assessoria', 'accent')} ${userName(n._by) || 'Assessoria'} · ${fmtDateTime(n._updated)}</p>
+      ${n.body ? html`<p class="prewrap">${n.body}</p>` : ''}`,
+    footer: html`<button type="button" class="btn btn-danger-ghost" data-del>${icon('trash')}<span>Excluir</span></button><span class="spacer"></span><button type="button" class="btn btn-ghost" data-pin>${icon('star')}<span>${n.pinned ? 'Desafixar' : 'Fixar na visão geral'}</span></button>`,
+    onMount(m) {
+      m.foot.querySelector('[data-pin]').onclick = () => run(async () => { await update('notes', n.id, { pinned: !n.pinned }); m.close(); });
+      m.foot.querySelector('[data-del]').onclick = async () => {
+        if (await confirmDialog('Excluir esta anotação da assessoria? Ela some para a assessoria também.')) {
+          await run(async () => { await remove('notes', n.id); toast('Anotação excluída'); m.close(); });
+        }
+      };
+    },
+  });
+}
+const openNote = (n) => (n?.fromPlanner ? plannerNote(n) : noteForm(n));
 const COLORS = [
   { value: 'creme', label: 'Creme' }, { value: 'rosa', label: 'Rosa' }, { value: 'salvia', label: 'Sálvia' },
   { value: 'azul', label: 'Azul' }, { value: 'lilas', label: 'Lilás' }, { value: 'areia', label: 'Areia' },
@@ -31,15 +51,20 @@ function noteForm(n = {}) {
 export default {
   render() {
     const q = norm(ui.q.trim());
+    const fromPlanner = state.items.notes.filter((n) => n.fromPlanner).length;
+    if (!fromPlanner) ui.from = 'todas';
     const list = state.items.notes
+      .filter((n) => ui.from === 'todas' || (ui.from === 'assessoria' ? n.fromPlanner : !n.fromPlanner))
       .filter((n) => !q || norm(`${n.title} ${n.body}`).includes(q))
       .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b._updated || 0) - (a._updated || 0));
     return html`
       ${pageHead('Anotações', 'Ideias, reuniões, decisões e tudo mais', html`<button type="button" class="btn btn-primary" data-act="add">${icon('plus')}<span>Anotação</span></button>`)}
       ${state.items.notes.length ? html`<div class="toolbar">${searchBox('q-notes', ui.q, 'Buscar nas anotações…')}</div>` : ''}
+      ${fromPlanner ? chips('from', [{ value: 'todas', label: 'Todas', count: state.items.notes.length }, { value: 'nossas', label: 'Nossas', count: state.items.notes.length - fromPlanner }, { value: 'assessoria', label: 'Da assessoria', count: fromPlanner }], ui.from) : ''}
       ${!state.items.notes.length ? empty('note', 'Nenhuma anotação ainda', 'Use para registrar reuniões com fornecedores, ideias, músicas, votos, listas de compras…', html`<button type="button" class="btn btn-primary" data-act="add">${icon('plus')}<span>Criar anotação</span></button>`)
         : !list.length ? empty('search', 'Nada encontrado', '')
         : html`<div class="notes-grid">${list.map((n) => html`<article class="note note-${n.color || 'creme'}" data-act="edit" data-id="${n.id}" tabindex="0">
+          ${n.fromPlanner ? html`<span class="note-from">${icon('briefcase')} Assessoria</span>` : ''}
           <header>${n.title ? html`<h3>${n.title}</h3>` : ''}<button type="button" class="pin ${n.pinned ? 'on' : ''}" data-act="pin" data-id="${n.id}" title="${n.pinned ? 'Desafixar' : 'Fixar na visão geral'}" aria-label="Fixar">${icon('star')}</button></header>
           ${n.body ? html`<p class="prewrap">${n.body}</p>` : ''}
           <footer>${fmtDateTime(n._updated)}${userName(n._by) ? ` · ${userName(n._by)}` : ''}</footer>
@@ -52,11 +77,12 @@ export default {
       const n = state.items.notes.find((x) => x.id === a.dataset.id);
       switch (a.dataset.act) {
         case 'add': noteForm(); break;
-        case 'edit': noteForm(n); break;
+        case 'edit': openNote(n); break;
+        case 'chip': ui[a.dataset.group] = a.dataset.val; emit(); break;
         case 'pin': run(() => update('notes', n.id, { pinned: !n.pinned })); break;
       }
     };
-    el.onkeydown = (e) => { if (e.key === 'Enter' && e.target.matches('.note')) noteForm(state.items.notes.find((x) => x.id === e.target.dataset.id)); };
+    el.onkeydown = (e) => { if (e.key === 'Enter' && e.target.matches('.note')) openNote(state.items.notes.find((x) => x.id === e.target.dataset.id)); };
     el.oninput = (e) => { if (e.target.id === 'q-notes') { ui.q = e.target.value; emit(); } };
   },
 };

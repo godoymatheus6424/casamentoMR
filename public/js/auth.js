@@ -2,7 +2,7 @@
 // esqueci minha senha e redefinir senha.
 import { api } from './api.js';
 import { state } from './store.js';
-import { html, icon } from './ui.js';
+import { html, icon, raw } from './ui.js';
 import { renderLanding, BRAND } from './landing.js';
 
 const app = document.getElementById('app');
@@ -29,6 +29,39 @@ export function authScreen(inner, { wide = false, back = true } = {}) {
   const first = app.querySelector('form input:not([type=checkbox])');
   if (first && matchMedia('(pointer: fine)').matches) first.focus();
 }
+// Login com o Google (aparece só quando o servidor tem GOOGLE_CLIENT_ID/SECRET).
+const GOOGLE_G = '<svg class="g-logo" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>';
+const GOOGLE_ERRORS = {
+  google_cancelado: 'Login com o Google cancelado.',
+  google_falhou: 'Não foi possível entrar com o Google. Tente de novo.',
+  google_email: 'Sua conta Google não tem e-mail confirmado.',
+  google_e_assessoria: 'Este Google está ligado a um perfil de assessoria. Use a aba "Assessoria".',
+  google_e_noivos: 'Este Google está ligado a uma conta de noivos. Use a aba "Noivos e família".',
+  google_ja_ligado: 'Este Google já está ligado a outra conta. Para este convite, crie a conta com e-mail e senha.',
+  sem_casamento: 'Sua conta não está ligada a nenhum casamento. Peça um link de convite aos noivos.',
+  cadastro_fechado: 'Não encontramos uma conta com este Google, e o cadastro não está aberto.',
+  muitas_tentativas: 'Muitas contas criadas daqui agora há pouco. Tente de novo em alguns minutos.',
+  convite_invalido: 'Este convite é inválido, já foi usado ou expirou. Peça um novo link aos noivos.',
+  convite_limite: 'Este casamento já atingiu o limite de pessoas. Fale com os noivos.',
+};
+// Lê o erro devolvido pelo login do Google (?erro=...) e tira do endereço, para não repetir ao recarregar.
+function takeError(params) {
+  const code = params.get('erro');
+  if (!code) return '';
+  params.delete('erro');
+  const [route] = location.hash.replace(/^#\/?/, '').split('?');
+  const rest = params.toString();
+  history.replaceState(null, '', `#/${route}${rest ? `?${rest}` : ''}`);
+  return GOOGLE_ERRORS[code] || 'Não foi possível entrar com o Google.';
+}
+function googleButton(kind, { invite = '', label = 'Continuar com o Google' } = {}) {
+  if (!state.status.google) return '';
+  const q = new URLSearchParams({ kind });
+  if (invite) q.set('invite', invite);
+  return html`<a class="btn btn-google btn-block" href="/api/auth/google/start?${q}">${raw(GOOGLE_G)}<span>${label}</span></a>
+    ${state.status.signupOpen || invite ? html`<p class="g-terms">Ao continuar com o Google, você aceita os <a href="/termos.html" target="_blank" rel="noopener">Termos de Uso</a> e a <a href="/privacidade.html" target="_blank" rel="noopener">Política de Privacidade</a>.</p>` : ''}
+    <div class="auth-or"><span>ou com e-mail</span></div>`;
+}
 const pwField = (id, name, label, auto) => html`<div class="field"><label for="${id}">${label}</label><div class="pw"><input id="${id}" type="password" name="${name}" autocomplete="${auto}" required><button type="button" class="pw-toggle" data-pw aria-label="Mostrar senha">${icon('eye')}</button></div></div>`;
 
 // Envia um formulário com tratamento de erro e botão "carregando".
@@ -53,10 +86,10 @@ export function renderAuth(msg = '') {
   if (route === 'cadastro' && state.status.signupOpen) return renderSignup(params.get('perfil') === 'assessoria' ? 'planner' : 'couple');
   if (route === 'esqueci') return renderForgot();
   if (route === 'redefinir') return renderReset(params.get('token') || '');
-  if (route === 'convite') return renderInvite(params.get('token') || '');
+  if (route === 'convite') { const err = takeError(params); return renderInvite(params.get('token') || '', 'signup', err); }
   // Endereço principal sem sessão: página de apresentação. Qualquer outro (#/entrar, páginas do app): login.
   if (!route && !msg) return renderLanding();
-  return renderLogin(msg, params.get('perfil') === 'assessoria' ? 'planner' : 'couple');
+  return renderLogin(msg || takeError(params), params.get('perfil') === 'assessoria' ? 'planner' : 'couple');
 }
 
 // Login separado por tipo de conta: noivos (e família) e assessoria são perfis independentes.
@@ -69,6 +102,7 @@ function renderLogin(msg = '', kind = 'couple') {
       <a href="#/entrar?perfil=assessoria" role="tab" aria-selected="${planner}" class="${planner ? 'on' : ''}">Assessoria</a>
     </div>
     <p class="muted center">${planner ? 'Entre para ver os casamentos que você acompanha.' : 'Entre para continuar o planejamento.'}</p>
+    ${googleButton(kind)}
     <form id="login" class="stack" autocomplete="on" novalidate>
       <div class="field"><label for="lu">E-mail</label><input id="lu" name="username" type="text" inputmode="email" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="voce@email.com"></div>
       ${pwField('lp', 'password', 'Senha', 'current-password')}
@@ -104,6 +138,7 @@ function renderSignup(kind = 'couple') {
     <p class="muted center">${planner
       ? 'Um único perfil, separado das contas de noivos, para todos os casamentos que você atende. Cada casal passa o código de acesso dele e você adiciona o casamento no seu perfil.'
       : `${days} dias grátis com tudo liberado. Não pedimos cartão.`}</p>
+    ${googleButton(kind, { label: planner ? 'Criar perfil com o Google' : 'Criar conta com o Google' })}
     <form id="signup" class="stack" novalidate>
       ${planner ? '' : html`<div class="two">
         <div class="field"><label for="sp1">Nome de um(a) noivo(a)</label><input id="sp1" name="partner1" autocomplete="off"></div>
@@ -210,7 +245,7 @@ function renderReset(token) {
 
 // Convite por link (enviado pelos noivos por WhatsApp, por exemplo): cria a conta ou entra numa existente.
 export const INVITE_ROLE = { couple: 'noivo(a)', planner: 'assessoria', member: 'família / amigo(a)' };
-async function renderInvite(token, mode = 'signup') {
+async function renderInvite(token, mode = 'signup', err = '') {
   // Convite de noivos/família sempre cria uma conta nova (conta de noivos tem um casamento só).
   // Convite de assessoria cria o perfil de assessoria ou entra no que ela já tem.
   let info;
@@ -231,13 +266,14 @@ async function renderInvite(token, mode = 'signup') {
     </div>
     <p class="muted center small">${signup ? 'O perfil de assessoria é separado das contas de noivos. Os próximos casais que convidarem você aparecem nele, para consulta.' : 'Entre com o seu perfil de assessoria e este casamento entra em "Meus casamentos".'}</p>`
       : html`<p class="muted center small">Crie a sua conta para este casamento.</p>`}
+    ${googleButton(planner ? 'planner' : 'couple', { invite: token, label: signup ? 'Criar conta com o Google' : 'Entrar com o Google' })}
     <form id="invite" class="stack" novalidate>
       ${signup ? html`<div class="field"><label for="in">${planner ? 'Seu nome ou da assessoria' : 'Seu nome'}</label><input id="in" name="name" autocomplete="name" required value="${info.name || ''}"></div>` : ''}
       <div class="field"><label for="ie">E-mail</label><input id="ie" name="email" type="email" autocomplete="${signup ? 'email' : 'username'}" autocapitalize="none" spellcheck="false" required><small>${signup ? 'É o seu login. Não enviamos nada para confirmar.' : ''}</small></div>
       ${pwField('ipw', 'password', signup ? 'Crie uma senha (mín. 8 caracteres, com letras e números)' : 'Senha', signup ? 'new-password' : 'current-password')}
       ${signup ? pwField('ipw2', 'password2', 'Confirme a senha', 'new-password') : ''}
       ${signup ? html`<label class="check terms"><input type="checkbox" name="terms"><span>Li e aceito os <a href="/termos.html" target="_blank" rel="noopener" class="link">Termos de Uso</a> e a <a href="/privacidade.html" target="_blank" rel="noopener" class="link">Política de Privacidade</a></span></label>` : ''}
-      <p class="form-error" role="alert"></p>
+      <p class="form-error" role="alert">${err}</p>
       <button class="btn btn-primary btn-block" type="submit">${signup ? (planner ? 'Criar perfil e entrar' : 'Criar conta e entrar') : 'Entrar e aceitar'}</button>
     </form>
     ${signup ? '' : html`<p class="auth-switch"><a href="#/esqueci" class="link small">Esqueci minha senha</a></p>`}`, { wide: signup });

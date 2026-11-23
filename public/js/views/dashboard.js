@@ -61,6 +61,8 @@ export default {
     const { missing } = missingCategories();
 
     const pinned = I.notes.filter((n) => n.pinned).slice(0, 3);
+    // Recados recentes da assessoria (os fixados já aparecem em "Notas fixadas")
+    const fromPlanner = I.notes.filter((n) => n.fromPlanner && !n.pinned).sort((a, b) => (b._updated || 0) - (a._updated || 0)).slice(0, 3);
     const onboarding = !s.partner1 && !s.partner2 && !s.date;
 
     return html`
@@ -134,6 +136,11 @@ export default {
         </div>
 
         <div class="dash-col">
+          ${fromPlanner.length ? html`<section class="card">
+            <header class="card-head"><h2>Da assessoria</h2><a href="#/anotacoes" class="link-more">Anotações ${icon('chevron')}</a></header>
+            <div class="mini-notes">${fromPlanner.map((n) => html`<a href="#/anotacoes" class="mini-note note-${n.color || 'creme'}"><strong>${n.title || 'Sem título'}</strong><p>${String(n.body || '').slice(0, 160)}</p></a>`)}</div>
+          </section>` : ''}
+
           <section class="card">
             <header class="card-head"><h2>O casamento</h2><button type="button" class="btn-icon" data-act="edit-wedding" aria-label="Editar">${icon('edit')}</button></header>
             <div class="info-list">
@@ -154,6 +161,7 @@ export default {
             <header class="card-head"><h2>Ainda falta contratar</h2><a href="#/fornecedores" class="link-more">Fornecedores ${icon('chevron')}</a></header>
             <div class="tag-cloud">${missing.map((c) => html`<a class="tag-btn" href="${vendorsLink(c.name)}">${c.name}</a>`)}</div>
           </section>` : ''}
+
 
           ${pinned.length ? html`<section class="card">
             <header class="card-head"><h2>Notas fixadas</h2><a href="#/anotacoes" class="link-more">Anotações ${icon('chevron')}</a></header>

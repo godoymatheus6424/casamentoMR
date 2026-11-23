@@ -69,7 +69,7 @@ O projeto já vem com um `Dockerfile`, então o Easypanel monta e roda o site so
 2. **Source:** escolha *GitHub* e selecione o repositório, branch `main`.
 3. **Build:** escolha **Dockerfile** (caminho `Dockerfile`).
 4. **Mounts → Add Volume Mount:** nome `data`, caminho de montagem **`/data`**. ⚠️ Esse passo é essencial: é aqui que ficam o banco e os contratos. Sem ele, tudo se perde a cada atualização.
-5. **Environment:** o Dockerfile já define `PORT=3000`, `DATA_DIR=/data`, `TRUST_PROXY=1` e `SIGNUP_OPEN=1` (cadastro aberto pelo site). Defina também `APP_URL=https://seudominio.com.br` (usado nos links de senha e convite) e, para enviar e-mails, `RESEND_API_KEY` e `MAIL_FROM`. Para um site de um casamento só, sem cadastro público, use `SIGNUP_OPEN=0`.
+5. **Environment:** o Dockerfile já define `PORT=3000`, `DATA_DIR=/data`, `TRUST_PROXY=1` e `SIGNUP_OPEN=1` (cadastro aberto pelo site). Defina também `APP_URL=https://seudominio.com.br` (usado nos links de senha e convite) para enviar e-mails, `RESEND_API_KEY` e `MAIL_FROM`; e, para o botão **Continuar com o Google**, `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` (no Google Cloud, o endereço de retorno é `https://seudominio.com.br/api/auth/google/callback`). Para um site de um casamento só, sem cadastro público, use `SIGNUP_OPEN=0`.
 6. Clique em **Deploy**.
 
 **3. Aponte o domínio.**

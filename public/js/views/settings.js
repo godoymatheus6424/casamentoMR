@@ -26,7 +26,7 @@ ${location.origin}/#/entrar?perfil=assessoria`;
 function plannerCard() {
   return html`<section class="card o-3">
     <header class="card-head"><h2>${icon('briefcase')} Assessoria</h2></header>
-    <p class="pad muted">Passe este código para a sua assessoria ou cerimonial. Ela cria um perfil de assessoria, digita o código em "Meus casamentos" e passa a consultar fornecedores e contatos, contratos, convidados e o cronograma, sem editar nada.</p>
+    <p class="pad muted">Passe este código para a sua assessoria ou cerimonial. Ela cria um perfil de assessoria, digita o código em "Meus casamentos" e passa a consultar fornecedores e contatos, contratos, convidados e o cronograma. Ela não edita nada, mas pode deixar anotações para vocês.</p>
     <div class="pad code-box">
       <span class="access-code" aria-label="Código de acesso">${ui.code == null ? '••••-••••' : ui.code || 'indisponível'}</span>
       ${ui.code ? html`<div class="code-actions">
@@ -35,7 +35,7 @@ function plannerCard() {
         <button type="button" class="btn btn-ghost btn-sm" data-act="rotatecode">Gerar novo</button>
       </div>` : ''}
     </div>
-    <p class="pad small muted">Só vocês veem este código. Orçamento, pagamentos, tarefas e anotações nunca aparecem para a assessoria.</p>
+    <p class="pad small muted">Só vocês veem este código. Orçamento, pagamentos, tarefas e as anotações de vocês nunca aparecem para a assessoria.</p>
   </section>`;
 }
 
@@ -50,17 +50,22 @@ const fmtDay = (ms) => (ms ? new Date(ms).toLocaleDateString('pt-BR') : '');
 const isOwner = () => state.workspace?.role === 'owner';
 
 export function passwordForm() {
+  // Conta criada pelo Google ainda não tem senha: cria a primeira, sem pedir a atual.
+  const first = state.user?.hasPassword === false;
   formModal({
-    title: 'Alterar senha',
+    title: first ? 'Criar senha' : 'Alterar senha',
+    intro: first ? 'Sua conta entra pelo Google. Se quiser, crie também uma senha para entrar com e-mail e senha.' : '',
     fields: [
-      { name: 'current', label: 'Senha atual', type: 'password', required: true, full: true, autocomplete: 'current-password' },
+      ...(first ? [] : [{ name: 'current', label: 'Senha atual', type: 'password', required: true, full: true, autocomplete: 'current-password' }]),
       { name: 'next', label: 'Nova senha', type: 'password', required: true, full: true, autocomplete: 'new-password', hint: 'Mínimo de 8 caracteres, com letras e números.' },
       { name: 'next2', label: 'Confirme a nova senha', type: 'password', required: true, full: true, autocomplete: 'new-password' },
     ],
     onSubmit: async (d) => {
       if (d.next !== d.next2) throw new Error('As senhas não conferem.');
       await api('POST', '/api/password', { current: d.current, next: d.next });
-      toast('Senha alterada. Outros dispositivos foram desconectados.');
+      if (first) state.user.hasPassword = true;
+      emit();
+      toast(first ? 'Senha criada. Agora você também pode entrar com e-mail e senha.' : 'Senha alterada. Outros dispositivos foram desconectados.');
     },
   });
 }
@@ -143,15 +148,20 @@ async function cancelInvite(id) {
 }
 
 // Excluir a própria conta: assessoria e convidados (quem criou o casamento exclui o casamento inteiro).
+// Confirmação para excluir: senha; conta só do Google (sem senha) digita EXCLUIR.
+const confirmField = () => (state.user?.hasPassword === false
+  ? { name: 'confirm', label: 'Digite EXCLUIR para confirmar', required: true, full: true, autocomplete: 'off' }
+  : { name: 'password', label: 'Sua senha', type: 'password', required: true, full: true, autocomplete: 'current-password' });
+
 export function deleteMyAccount() {
   const planner = state.user?.kind === 'planner';
   formModal({
     title: planner ? 'Excluir meu perfil' : 'Excluir minha conta',
     intro: `Apaga a sua conta e remove o seu acesso a ${planner ? 'todos os casamentos' : 'este casamento'}. O planejamento continua com os noivos. Não dá para desfazer.`,
-    fields: [{ name: 'password', label: 'Sua senha', type: 'password', required: true, full: true, autocomplete: 'current-password' }],
+    fields: [confirmField()],
     submitLabel: planner ? 'Excluir perfil' : 'Excluir conta',
     onSubmit: async (d) => {
-      await api('DELETE', '/api/me', { password: d.password });
+      await api('DELETE', '/api/me', { password: d.password, confirm: d.confirm });
       location.hash = '';
       location.reload();
     },
@@ -241,12 +251,12 @@ function deleteAccountDialog() {
     intro: 'Isso apaga DEFINITIVAMENTE o planejamento inteiro: fornecedores, contratos e arquivos, convidados, orçamento, anotações e os acessos das pessoas convidadas. Não dá para desfazer. Se quiser guardar uma cópia, baixe o backup antes.',
     fields: [
       { name: 'confirm', label: 'Digite EXCLUIR para confirmar', required: true, full: true, autocomplete: 'off' },
-      { name: 'password', label: 'Sua senha', type: 'password', required: true, full: true, autocomplete: 'current-password' },
+      ...(state.user?.hasPassword === false ? [] : [{ name: 'password', label: 'Sua senha', type: 'password', required: true, full: true, autocomplete: 'current-password' }]),
     ],
     submitLabel: 'Excluir tudo',
     onSubmit: async (d) => {
       if (d.confirm.trim().toUpperCase() !== 'EXCLUIR') throw new Error('Digite EXCLUIR para confirmar.');
-      await api('DELETE', '/api/workspace', { password: d.password });
+      await api('DELETE', '/api/workspace', { password: d.password, confirm: d.confirm });
       location.hash = '';
       location.reload();
     },
@@ -317,7 +327,7 @@ export default {
           <header class="card-head"><h2>${icon('user')} Minha conta</h2></header>
           <div class="list">
             <div class="row clickable" data-act="account"><div class="row-main"><div class="row-title">${state.user.name}</div><div class="row-meta"><span>${state.user.email || html`<span class="text-warn">sem e-mail: adicione para poder recuperar a senha</span>`}</span></div></div>${icon('edit')}</div>
-            <div class="row clickable" data-act="password"><div class="row-main"><div class="row-title">Alterar senha</div></div>${icon('chevron')}</div>
+            <div class="row clickable" data-act="password"><div class="row-main"><div class="row-title">${state.user.hasPassword === false ? 'Criar senha' : 'Alterar senha'}</div>${state.user.google ? html`<div class="row-meta"><span>Conectada ao Google${state.user.hasPassword === false ? ': entra sem senha' : ''}</span></div>` : ''}</div>${icon('chevron')}</div>
             <div class="row clickable" data-act="devices"><div class="row-main"><div class="row-title">Dispositivos conectados</div><div class="row-meta"><span>Veja onde sua conta está aberta</span></div></div>${icon('chevron')}</div>
           </div>
         </section>

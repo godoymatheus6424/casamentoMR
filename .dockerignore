@@ -4,3 +4,4 @@ node_modules
 .vscode
 *.md
 iniciar.bat
+client_secret_*.json

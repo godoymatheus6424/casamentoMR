@@ -1,2 +1,5 @@
 data/
 node_modules/
+
+# Credenciais do Google (nunca subir para o GitHub)
+client_secret_*.json

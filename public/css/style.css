@@ -1041,3 +1041,20 @@ a.auth-back:hover { color: var(--bx-gold); }
 .join-form .form-error:empty { display: none; }
 .modal .join-form { padding-top: 14px; border-top: 1px solid var(--line); }
 @media (max-width: 420px) { .join-row { flex-direction: column; } }
+.note-from { display: inline-flex; align-items: center; gap: 6px; justify-self: start; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; font-weight: 600; color: var(--accent); }
+.note-from .ic { width: 13px; height: 13px; }
+.note .pin:not(button) { color: var(--accent); }
+.ro-note .link { color: var(--accent); }
+
+/* Login com o Google */
+.btn-google { display: flex; align-items: center; justify-content: center; gap: 12px; background: #fff; color: #1f1f1f; border: 1px solid #dadce0; text-transform: none; letter-spacing: 0; font: 500 15px/1 var(--sans); min-height: 46px; padding: 0 16px; }
+.btn-google:hover { background: #f4f6f9; color: #1f1f1f; border-color: #c6c9cf; }
+.btn-google .g-logo { width: 19px; height: 19px; flex: none; }
+.g-terms { margin: 8px 0 0; text-align: center; font-size: 12px; color: var(--muted); }
+.g-terms a { color: inherit; text-decoration: underline; }
+.auth-or { display: flex; align-items: center; gap: 12px; margin: 16px 0 4px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.auth-or::before, .auth-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.auth .btn-google, .auth .btn-google:hover { border-radius: 0; color: #1f1f1f; font-family: var(--bx-sans, var(--sans)); }
+.auth .auth-or { color: rgba(243, 239, 230, .55); }
+.auth .auth-or::before, .auth .auth-or::after { background: rgba(243, 239, 230, .18); }
+.auth .g-terms { color: rgba(243, 239, 230, .6); }
