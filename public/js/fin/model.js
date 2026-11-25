@@ -281,7 +281,8 @@ export function invoiceEntries(src, card, key) {
   const out = [];
   for (const t of src.items.transactions) {
     if (t.skipped || t.cardId !== card.id) continue;
-    if (invoiceKey(card, t.date) === key) out.push({ ...t, owner: src.owner, src, tx: t, card, amount: Number(t.amount) || 0, invoice: key });
+    // No cartão, a situação é a da fatura (não a do lançamento).
+    if (invoiceKey(card, t.date) === key) out.push({ ...t, owner: src.owner, src, tx: t, card, amount: Number(t.amount) || 0, invoice: key, paid: !!card.paidInvoices?.[key] });
   }
   out.push(...cardRecurring(src, key, card));
   return out.sort((a, b) => a.date.localeCompare(b.date));
