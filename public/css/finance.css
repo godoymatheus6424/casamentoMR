@@ -437,6 +437,7 @@ body.modal-open .fin-fab { opacity: 0; pointer-events: none; }
 .fin-cols > .fin-section { margin: 0; }
 .fin-narrow { max-width: 760px; }
 .fin-cards-layout { display: grid; gap: 4px; }
+.fin-cards-layout > * { min-width: 0; } /* a faixa de cartões rola por dentro, sem alargar a página */
 .fin-cards-main .fin-month { justify-content: flex-start; }
 
 /* Menu lateral (só no computador) */

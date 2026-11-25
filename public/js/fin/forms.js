@@ -73,10 +73,16 @@ export function txForm(t = {}, { kind = t.kind || 'expense', card = false } = {}
       { name: 'date', label: 'Data', type: 'date', required: true, hint: kind === 'expense' ? 'No cartão, a data da compra: o sistema acha a fatura.' : '' },
       { name: 'party', label: kind === 'income' ? 'De onde vem' : 'Para onde vai', placeholder: kind === 'income' ? 'Empresa, cliente, pessoa…' : 'Loja, pessoa, empresa…', list: knownParties(kind) },
     );
-    if (kind === 'expense' && isNew) fields.push({ name: 'installments', label: 'Parcelas', type: 'number', min: 1, max: 72, hint: 'Divide o valor em parcelas mensais (no cartão, uma em cada fatura).' });
-    fields.push({ name: 'paid', label: kind === 'income' ? 'Já recebi' : 'Já foi pago', type: 'checkbox', hint: kind === 'expense' ? 'No cartão, conta como pago quando a fatura for paga.' : '' });
+    const once = (v) => !v.repeat || v.repeat === 'once';
+    if (kind === 'expense' && isNew) {
+      fields.push(
+        { name: 'repeat', label: 'Repete', type: 'select', options: [{ value: 'once', label: 'Não, só esta vez' }, { value: 'monthly', label: 'Todo mês (assinatura, mensalidade)' }, { value: 'yearly', label: 'Uma vez por ano (anuidade, seguro)' }], hint: 'Repetindo, vira um gasto fixo: no cartão, entra sozinho em cada fatura.' },
+        { name: 'installments', label: 'Parcelas', type: 'number', min: 1, max: 72, hint: 'Divide o valor em parcelas mensais (no cartão, uma em cada fatura).', showIf: once },
+      );
+    }
+    fields.push({ name: 'paid', label: kind === 'income' ? 'Já recebi' : 'Já foi pago', type: 'checkbox', hint: kind === 'expense' ? 'No cartão, conta como pago quando a fatura for paga.' : '', showIf: once });
   }
-  if (kind !== 'transfer') fields.push(attachField());
+  if (kind !== 'transfer') fields.push(attachField({ showIf: (v) => !v.repeat || v.repeat === 'once' }));
   fields.push({ name: 'notes', label: 'Observações', type: 'textarea', rows: 2, full: true });
   if (group.length > 1) fields.push({ type: 'html', html: html`<p class="fin-note">${icon('repeat')} Parcela ${t.installment}/${t.installments} de uma compra de ${money(group.reduce((a, x) => a + (Number(x.amount) || 0), 0))}. A edição vale só para esta parcela. <button type="button" class="fin-link danger" data-delgroup>Excluir as ${group.length} parcelas</button></p>` });
 
@@ -95,6 +101,17 @@ export function txForm(t = {}, { kind = t.kind || 'expense', card = false } = {}
       else {
         const [type, id] = String(d.payWith || '').split(':');
         Object.assign(base, type === 'c' ? { cardId: id, accountId: '' } : { accountId: id, cardId: '' });
+      }
+      // Compra que se repete: vira gasto fixo (no cartão, entra sozinho em cada fatura), a partir do mês da data.
+      if (isNew && d.repeat && d.repeat !== 'once') {
+        await fcreate('recurring', {
+          kind: 'expense', description: base.description, amount: d.amount, day: Number(d.date.slice(8)),
+          frequency: d.repeat === 'yearly' ? 'yearly' : 'monthly', every: 2, month: Number(d.date.slice(5, 7)),
+          start: monthOf(d.date), end: '', categoryId: base.categoryId, party: base.party, notes: base.notes,
+          variable: false, active: true, cardId: base.cardId || '', accountId: base.accountId || '',
+        });
+        toast(base.cardId ? 'Gasto fixo criado: entra em toda fatura' : 'Gasto fixo criado');
+        return;
       }
       if (attach) base.attachments = attach.get();
       if (!isNew) { await fupdate('transactions', t.id, base); await attach?.saved(); toast('Lançamento salvo'); return; }

@@ -170,8 +170,8 @@ function attachList(list) {
     ? html`${list.map((a) => html`<div class="attach-item"><a href="/api/files/${a.id}" target="_blank" rel="noopener">${icon(IMAGE_EXT.has(a.ext) ? 'image' : 'file')}<span>${a.name}</span></a><button type="button" class="btn-icon sm" data-attach-del="${a.id}" title="Remover" aria-label="Remover comprovante">${icon('x')}</button></div>`)}`
     : html`<small class="attach-empty">Nenhum comprovante anexado. Foto, print ou PDF.</small>`;
 }
-export const attachField = () => ({
-  type: 'html',
+export const attachField = (extra = {}) => ({
+  type: 'html', name: 'attach', ...extra,
   html: html`<div class="attach" data-attach-box><span class="attach-label">Comprovante</span><div class="attach-list"></div>
     <label class="btn btn-ghost btn-sm attach-btn">${icon('clip')}<span>Anexar comprovante</span><input type="file" accept="image/*,application/pdf" multiple hidden data-attach-input></label></div>`,
 });
