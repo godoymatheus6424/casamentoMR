@@ -68,6 +68,13 @@ export async function updateMany(coll, ids, patchFn) {
   for (const id of ids) await update(coll, id, patchFn(id), { silent: true });
   emit();
 }
+export async function removePayments(ids) {
+  if (!ids.length) return;
+  await api('POST', '/api/items/payments/delete', { ids });
+  const gone = new Set(ids);
+  state.items.payments = state.items.payments.filter((x) => !gone.has(x.id));
+  emit();
+}
 export async function remove(coll, id) {
   const r = await api('DELETE', `/api/items/${coll}/${id}`);
   if (r?.cascaded) { await loadAll(); return; }

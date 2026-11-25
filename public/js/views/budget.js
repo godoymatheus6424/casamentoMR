@@ -1,7 +1,7 @@
 import { state, create, update, remove, updateMany, saveSettings, emit } from '../store.js';
 import { html, icon, pageHead, chips, empty, formModal, toast, money, moneyShort, fmtDate, fmtDateShort, todayISO, progress, badge, run, sum, confirmDialog, downloadCSV, csvMoney } from '../ui.js';
 import { budgetCats, contractedVendors, paidOf, splitTotals, paymentSplitTag } from '../domain.js';
-import { paymentForm, togglePaid, calendarDialog, isUpcoming } from '../forms.js';
+import { paymentForm, togglePaid, calendarDialog, isUpcoming, splitAllDialog, paySel, selOn, selStart, selToggle, selBar, selAction } from '../forms.js';
 import { BUDGET_CATEGORIES } from '../seed.js';
 import { openVendor, vendorForm } from './vendors.js';
 
@@ -12,7 +12,7 @@ function splitCard() {
   const rows = splitTotals().filter((r) => r.contracted > 0.004 || r.paid > 0.004);
   if (!rows.length) return '';
   return html`<section class="card split-card">
-    <header class="card-head"><h2>Quanto cada um paga</h2><small class="muted">Pela divisão marcada em cada fornecedor</small></header>
+    <header class="card-head"><h2>Quanto cada um paga</h2><button type="button" class="btn btn-ghost btn-sm" data-act="splitall">${icon('users')}<span>Dividir todas as parcelas</span></button></header>
     <div class="split-table">
       <div class="split-tr head"><span>Pessoa</span><span>Parte do contratado</span><span>Já pagou</span><span>Falta</span></div>
       ${rows.map((r) => html`<div class="split-tr"><span><strong>${r.label}</strong></span><span>${money(r.contracted)}</span><span class="text-ok">${money(r.paid)}</span><span>${money(Math.max(0, r.contracted - r.paid))}</span></div>`)}
@@ -122,6 +122,8 @@ function paymentsTab() {
     return k * (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
   });
   const vendorName = (id) => state.items.vendors.find((v) => v.id === id)?.name || '';
+  const selecting = selOn('budget');
+  ui.visibleIds = list.map((p) => p.id);
   // agrupa por mês
   const groups = [];
   for (const p of list) {
@@ -140,15 +142,20 @@ function paymentsTab() {
         { value: 'todos', label: 'Todos', count: all.length },
       ], ui.pay)}
       <span class="spacer"></span>
+      ${all.length ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="splitall" title="Dividir todas as parcelas">${icon('users')}<span>Dividir</span></button>` : ''}
+      ${list.length > 1 && !selecting ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="sel-start">Selecionar</button>` : ''}
       ${all.some(isUpcoming) ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="calpay" title="Adicionar à agenda">${icon('calendar')}<span>Agenda</span></button>` : ''}
       <button type="button" class="btn btn-ghost btn-sm hide-sm" data-act="exportpay">${icon('download')}<span>Exportar</span></button>
       <button type="button" class="btn btn-ghost btn-sm" data-act="addpay">${icon('plus')}<span>Pagamento</span></button>
     </div>
+    ${selecting ? selBar(list.map((p) => p.id)) : ''}
     ${!list.length ? empty('money', ui.pay === 'atrasados' ? 'Nada atrasado' : 'Nenhum pagamento', 'Cadastre parcelas pelo fornecedor (botão "Gerar parcelas") ou adicione pagamentos avulsos aqui.')
       : groups.map((g) => html`<section class="group">
         <h2 class="group-title">${monthLabel(g.key)}<span class="group-n">${money(sum(g.items, (p) => p.amount))}</span></h2>
-        <div class="card list">${g.items.map((p) => html`<div class="row clickable" data-act="editpay" data-id="${p.id}">
-          <input type="checkbox" class="tick" data-act="paytoggle" data-id="${p.id}" ${p.paid ? 'checked' : ''} aria-label="Pago">
+        <div class="card list">${g.items.map((p) => html`<div class="row clickable ${selecting && paySel.ids.has(p.id) ? 'picked' : ''}" data-act="${selecting ? 'sel-toggle' : 'editpay'}" data-id="${p.id}">
+          ${selecting
+            ? html`<input type="checkbox" class="tick sel" data-act="sel-toggle" data-id="${p.id}" ${paySel.ids.has(p.id) ? 'checked' : ''} aria-label="Selecionar">`
+            : html`<input type="checkbox" class="tick" data-act="paytoggle" data-id="${p.id}" ${p.paid ? 'checked' : ''} aria-label="Pago">`}
           <div class="date-chip ${late(p) ? 'late' : ''} ${p.paid ? 'done' : ''}">${p.dueDate ? fmtDateShort(p.dueDate) : '—'}</div>
           <div class="row-main"><div class="row-title">${p.description}</div>
             <div class="row-meta">${p.vendorId ? html`<span>${vendorName(p.vendorId)}</span>` : ''}${p.method ? html`<span>${p.method}</span>` : ''}${p.split ? html`<span class="split-tag">${icon('users')} ${paymentSplitTag(p)}</span>` : ''}${p.paid ? html`<span class="text-ok">pago${p.paidDate ? ` em ${fmtDate(p.paidDate)}` : ''}</span>` : late(p) ? html`<span class="text-danger">vencido</span>` : ''}</div>
@@ -193,11 +200,26 @@ export default {
   },
 
   mount(el) {
-    el.onclick = (e) => {
+    el.onclick = async (e) => {
       const a = e.target.closest('[data-act]');
       if (!a) return;
       const id = a.dataset.id;
-      switch (a.dataset.act) {
+      const act = a.dataset.act;
+      if (act.startsWith('sel-') && act !== 'sel-start' && act !== 'sel-toggle') {
+        if (act === 'sel-all') e.preventDefault();
+        await selAction(act, ui.visibleIds || []);
+        return;
+      }
+      switch (act) {
+        case 'sel-start': selStart('budget'); break;
+        case 'sel-toggle': e.preventDefault(); selToggle(id); break;
+        case 'splitall': {
+          // Todos os fornecedores com valor ou pagamentos, e os pagamentos avulsos (sem fornecedor).
+          const vendors = state.items.vendors.filter((v) => v.status === 'contratado' || state.items.payments.some((p) => p.vendorId === v.id));
+          const ids = new Set(vendors.map((v) => v.id));
+          splitAllDialog({ vendors, loose: state.items.payments.filter((p) => !ids.has(p.vendorId)), title: 'Dividir todas as parcelas do casamento' });
+          break;
+        }
         case 'total': totalForm(); break;
         case 'tab': ui.tab = a.dataset.val; emit(); break;
         case 'chip': ui[a.dataset.group] = a.dataset.val; emit(); break;

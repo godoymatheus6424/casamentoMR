@@ -1099,3 +1099,9 @@ a.auth-back:hover { color: var(--bx-gold); }
   .split-row { grid-template-columns: 1fr 1fr; row-gap: 2px; }
   .split-row > span:first-child { grid-column: 1 / -1; white-space: normal; }
 }
+
+/* Seleção de vários pagamentos */
+.sel-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; margin: 0 0 10px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); }
+.sel-bar .check span { font-weight: 500; }
+.row.picked { background: var(--accent-soft); }
+.tick.sel { accent-color: var(--accent); }

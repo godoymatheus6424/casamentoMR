@@ -1100,6 +1100,15 @@ route('DELETE', '/api/items/:coll/:id', ({ res, params, session }) => {
   send(res, 200, { ok: true, cascaded });
 }, { write: true, plannerNotes: true });
 
+// Excluir vários pagamentos de uma vez (seleção na lista).
+route('POST', '/api/items/payments/delete', async ({ req, res, session }) => {
+  const b = await readJson(req);
+  if (!Array.isArray(b.ids) || !b.ids.length || b.ids.length > 500 || !b.ids.every(isUuid)) throw new HttpError(400, 'Lista inválida.');
+  const ws = session.workspace_id;
+  const n = tx(() => b.ids.reduce((acc, id) => acc + S("DELETE FROM items WHERE id = ? AND coll = 'payments' AND workspace_id = ?").run(id, ws).changes, 0));
+  send(res, 200, { ok: true, deleted: n });
+}, { write: true });
+
 // Arquivos
 route('POST', '/api/files', async ({ req, res, session }) => {
   res.setHeader('Connection', 'close');

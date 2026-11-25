@@ -1,8 +1,8 @@
 // Formulários e componentes compartilhados entre telas.
-import { state, create, update, remove, bulkCreate, saveSettings, uploadFile, updateFile, deleteFile, byId } from './store.js';
+import { state, create, update, updateMany, remove, removePayments, bulkCreate, saveSettings, uploadFile, updateFile, deleteFile, byId, emit } from './store.js';
 import { api } from './api.js';
-import { html, icon, formModal, openModal, toast, todayISO, shiftISO, money, moneyInput, parseMoney, fmtSize, fmtDate, confirmDialog, selectOptions, sum, run } from './ui.js';
-import { PAYMENT_METHODS, FILE_CATEGORIES, fileCategory, IMAGE_EXT, paymentsOf, telLink, waLink, igLink, webLink, names, vendorSplit, splitLabel } from './domain.js';
+import { html, raw, icon, formModal, openModal, toast, todayISO, shiftISO, money, moneyInput, parseMoney, fmtSize, fmtDate, confirmDialog, selectOptions, sum, run } from './ui.js';
+import { PAYMENT_METHODS, FILE_CATEGORIES, fileCategory, IMAGE_EXT, paymentsOf, telLink, waLink, igLink, webLink, names, vendorSplit, splitLabel, splitPeople, DEFAULT_SPLIT } from './domain.js';
 
 export function weddingForm() {
   formModal({
@@ -36,10 +36,10 @@ export function weddingForm() {
 // ---------------------------------------------------------------------------
 // Quem paga um pagamento: como o fornecedor (padrão), só um dos noivos, ou outra divisão
 // ---------------------------------------------------------------------------
-function payerOptions(vendor, { custom = true } = {}) {
+function payerOptions(vendor, { custom = true, followLabel = '' } = {}) {
   const n = names();
   return [
-    { value: 'vendor', label: vendor ? `Como o fornecedor (${splitLabel(vendorSplit(vendor))})` : `Os dois (${n.p1} e ${n.p2})` },
+    { value: 'vendor', label: followLabel || (vendor ? `Como o fornecedor (${splitLabel(vendorSplit(vendor))})` : `Os dois (${n.p1} e ${n.p2})`) },
     { value: 'p1', label: `Só ${n.p1}` },
     { value: 'p2', label: `Só ${n.p2}` },
     ...(custom ? [{ value: 'custom', label: 'Outra divisão…' }] : []),
@@ -52,11 +52,11 @@ function payerValues(split) {
   if (split.p1 === false && split.p2 !== false && !others) return { payer: 'p2', payP1: false, payP2: true, payOthers: '' };
   return { payer: 'custom', payP1: split.p1 !== false, payP2: split.p2 !== false, payOthers: others };
 }
-function payerFields(vendor) {
+function payerFields(vendor, opts = {}) {
   const n = names();
   const custom = (v) => v.payer === 'custom';
   return [
-    { name: 'payer', label: 'Quem paga', type: 'select', full: true, options: payerOptions(vendor) },
+    { name: 'payer', label: 'Quem paga', type: 'select', full: true, options: payerOptions(vendor, opts) },
     { name: 'payP1', label: n.p1, type: 'checkbox', showIf: custom },
     { name: 'payP2', label: n.p2, type: 'checkbox', showIf: custom },
     { name: 'payOthers', label: 'Também dividem', full: true, placeholder: 'Ex.: Pais da noiva (separe por vírgula)', showIf: custom },
@@ -71,6 +71,95 @@ function payerSplit(d) {
   const others = String(d.payOthers || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 6);
   if (!d.payP1 && !d.payP2 && !others.length) throw Object.assign(new Error('Marque pelo menos uma pessoa que paga.'), { field: 'payP1' });
   return { p1: !!d.payP1, p2: !!d.payP2, others };
+}
+
+// ---------------------------------------------------------------------------
+// Dividir todas as parcelas (de um fornecedor ou do casamento inteiro)
+// ---------------------------------------------------------------------------
+const sameSplit = (a, b) => JSON.stringify(splitPeople(a).map((p) => p.key)) === JSON.stringify(splitPeople(b).map((p) => p.key));
+export function splitAllDialog({ vendors = [], loose = [], title = 'Dividir todas as parcelas' } = {}) {
+  const n = names();
+  const pays = [...vendors.flatMap((v) => paymentsOf(v.id)), ...loose];
+  const own = vendors.flatMap((v) => paymentsOf(v.id)).filter((p) => p.split);
+  const first = vendors[0]?.split || DEFAULT_SPLIT;
+  const allSame = vendors.every((v) => sameSplit(v.split, first));
+  const start = allSame ? first : DEFAULT_SPLIT;
+  const what = vendors.length === 1 && !loose.length
+    ? `${pays.length} ${pays.length === 1 ? 'pagamento' : 'pagamentos'} de ${vendors[0].name}`
+    : `${pays.length} ${pays.length === 1 ? 'pagamento' : 'pagamentos'} de ${vendors.length} ${vendors.length === 1 ? 'fornecedor' : 'fornecedores'}`;
+  formModal({
+    title,
+    intro: `Marque quem divide. O valor de cada parcela é dividido em partes iguais entre os marcados (${what}). Nas finanças, cada um vê só a sua parte.`,
+    values: { p1: start.p1 !== false, p2: start.p2 !== false, others: (start.others || []).join(', '), override: false },
+    fields: [
+      { name: 'p1', label: n.p1, type: 'checkbox' },
+      { name: 'p2', label: n.p2, type: 'checkbox' },
+      { name: 'others', label: 'Também dividem (opcional)', full: true, placeholder: 'Ex.: Pais da noiva (separe por vírgula)' },
+      ...(own.length ? [{ name: 'override', label: `Mudar também ${own.length === 1 ? 'o pagamento' : `os ${own.length} pagamentos`} com divisão própria (ex.: entrada de um só)`, type: 'checkbox', full: true, hint: 'Desmarcado, essas exceções continuam como estão.' }] : []),
+    ],
+    submitLabel: 'Dividir',
+    onSubmit: async (d) => {
+      const others = String(d.others || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 6);
+      if (!d.p1 && !d.p2 && !others.length) throw Object.assign(new Error('Marque pelo menos uma pessoa.'), { field: 'p1' });
+      const split = { p1: !!d.p1, p2: !!d.p2, others };
+      for (const v of vendors) if (!sameSplit(v.split, split) || !v.split) await update('vendors', v.id, { split }, { silent: true });
+      if (d.override) for (const p of own) await update('payments', p.id, { split: null }, { silent: true });
+      for (const p of loose) if (!p.split || !sameSplit(p.split, split)) await update('payments', p.id, { split }, { silent: true });
+      emit();
+      const k = splitPeople(split).length;
+      toast(k === 1 ? `Tudo fica com ${splitPeople(split)[0].label}` : `Dividido em ${k}: ${splitLabel(splitPeople(split))}`);
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Seleção de vários pagamentos (excluir ou mudar quem paga de uma vez)
+// ---------------------------------------------------------------------------
+export const paySel = { scope: '', ids: new Set() };
+export const selOn = (scope) => paySel.scope === scope;
+export function selStart(scope) { paySel.scope = scope; paySel.ids = new Set(); emit(); }
+export function selEnd() { if (!paySel.scope) return; paySel.scope = ''; paySel.ids = new Set(); emit(); }
+export function selToggle(id) { if (paySel.ids.has(id)) paySel.ids.delete(id); else paySel.ids.add(id); emit(); }
+window.addEventListener('hashchange', () => { paySel.scope = ''; paySel.ids = new Set(); });
+export function selBar(visibleIds) {
+  const n = [...paySel.ids].filter((id) => visibleIds.includes(id)).length;
+  const all = n === visibleIds.length && n > 0;
+  return html`<div class="sel-bar">
+    <label class="check small"><input type="checkbox" data-act="sel-all" ${all ? raw('checked') : ''}><span>${n ? `${n} ${n === 1 ? 'selecionado' : 'selecionados'}` : 'Marcar todos'}</span></label>
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-ghost btn-sm" data-act="sel-payer" ${n ? '' : raw('disabled')}>${icon('users')}<span>Quem paga</span></button>
+    <button type="button" class="btn btn-danger-ghost btn-sm" data-act="sel-del" ${n ? '' : raw('disabled')}>${icon('trash')}<span>Excluir</span></button>
+    <button type="button" class="btn btn-ghost btn-sm" data-act="sel-cancel">Cancelar</button>
+  </div>`;
+}
+// Trata os botões da barra; devolve true se a ação era da seleção.
+export async function selAction(act, visibleIds) {
+  const ids = [...paySel.ids].filter((id) => visibleIds.includes(id));
+  if (act === 'sel-cancel') { selEnd(); return true; }
+  if (act === 'sel-all') { paySel.ids = ids.length === visibleIds.length ? new Set() : new Set(visibleIds); emit(); return true; }
+  if (act === 'sel-del') {
+    if (!ids.length) return true;
+    if (!(await confirmDialog(`Excluir ${ids.length === 1 ? 'o pagamento selecionado' : `os ${ids.length} pagamentos selecionados`}? Não dá para desfazer.`, { ok: 'Excluir' }))) return true;
+    await run(async () => { await removePayments(ids); paySel.ids = new Set(); selEnd(); toast(ids.length === 1 ? 'Pagamento excluído' : `${ids.length} pagamentos excluídos`); });
+    return true;
+  }
+  if (act === 'sel-payer') {
+    if (!ids.length) return true;
+    formModal({
+      title: 'Quem paga',
+      intro: `Vale para ${ids.length === 1 ? 'o pagamento selecionado' : `os ${ids.length} pagamentos selecionados`}.`,
+      values: { payer: 'vendor', payP1: true, payP2: true, payOthers: '' },
+      fields: payerFields(null, { followLabel: 'Como o fornecedor de cada um' }),
+      onSubmit: async (d) => {
+        const split = payerSplit(d);
+        await updateMany('payments', ids, () => ({ split }));
+        selEnd();
+        toast('Divisão atualizada');
+      },
+    });
+    return true;
+  }
+  return false;
 }
 
 export function paymentForm(p = {}, { vendorId } = {}) {

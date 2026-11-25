@@ -1,7 +1,7 @@
 import { state, create, update, remove, byId, emit } from '../store.js';
 import { html, icon, pageHead, chips, searchBox, empty, formModal, openModal, toast, money, moneyShort, fmtDate, todayISO, progress, badge, run, norm, sum, plural, downloadCSV, csvMoney, confirmDialog } from '../ui.js';
 import { VENDOR_STATUS, vendorStatus, vendorCategoryOptions, paymentsOf, paidOf, filesOf, missingCategories, names, vendorSplit, splitLabel, DEFAULT_SPLIT, vendorAllocation, paymentSplitTag } from '../domain.js';
-import { paymentForm, installmentsForm, calendarDialog, isUpcoming, togglePaid, fileRow, fileEditForm, uploadMany, contactLinks, stars } from '../forms.js';
+import { paymentForm, installmentsForm, calendarDialog, isUpcoming, togglePaid, splitAllDialog, paySel, selOn, selStart, selEnd, selToggle, selBar, selAction, fileRow, fileEditForm, uploadMany, contactLinks, stars } from '../forms.js';
 
 const ui = { status: 'todos', cat: '', q: '', missingOpen: true, showSkipped: false, popCat: '' };
 
@@ -124,6 +124,8 @@ export function openVendor(id) {
       const paid = paidOf(id);
       const scheduled = sum(pays, (p) => p.amount);
       const files = filesOf(id);
+      const selScope = `vendor:${id}`;
+      const selecting = selOn(selScope);
       return html`
         <div class="vd-head">
           ${v.category ? html`<span class="eyebrow">${v.category}</span>` : ''}
@@ -147,13 +149,19 @@ export function openVendor(id) {
             <div class="sec-actions">
               ${pays.some(isUpcoming) ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="cal" title="Adicionar à agenda">${icon('calendar')}<span>Agenda</span></button>` : ''}
               ${price ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="gen">Gerar parcelas</button>` : ''}
+              ${pays.length || price ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="splitall" title="Dividir todas as parcelas">${icon('users')}<span>Dividir</span></button>` : ''}
+              ${pays.length > 1 && !selecting ? html`<button type="button" class="btn btn-ghost btn-sm" data-act="sel-start">Selecionar</button>` : ''}
               <button type="button" class="btn btn-ghost btn-sm" data-act="addpay">${icon('plus')}<span>Pagamento</span></button>
             </div>
           </div>
+          ${selecting ? selBar(pays.map((p) => p.id)) : ''}
           ${pays.length ? html`<div class="list">${pays.map((p) => {
             const late = !p.paid && p.dueDate && p.dueDate < today;
-            return html`<div class="row clickable" data-act="editpay" data-id="${p.id}">
-              <input type="checkbox" class="tick" data-act="paytoggle" data-id="${p.id}" ${p.paid ? 'checked' : ''} aria-label="Pago">
+            const picked = selecting && paySel.ids.has(p.id);
+            return html`<div class="row clickable ${picked ? 'picked' : ''}" data-act="${selecting ? 'sel-toggle' : 'editpay'}" data-id="${p.id}">
+              ${selecting
+                ? html`<input type="checkbox" class="tick sel" data-act="sel-toggle" data-id="${p.id}" ${picked ? 'checked' : ''} aria-label="Selecionar">`
+                : html`<input type="checkbox" class="tick" data-act="paytoggle" data-id="${p.id}" ${p.paid ? 'checked' : ''} aria-label="Pago">`}
               <div class="row-main"><div class="row-title">${p.description}</div>
                 <div class="row-meta">${p.dueDate ? html`<span class="${late ? 'text-danger' : ''}">${icon('calendar')} ${fmtDate(p.dueDate)}</span>` : ''}${p.method ? html`<span>${p.method}</span>` : ''}${p.split ? html`<span class="split-tag">${icon('users')} ${paymentSplitTag(p)}</span>` : ''}${p.paid ? html`<span class="text-ok">pago${p.paidDate ? ` em ${fmtDate(p.paidDate)}` : ''}</span>` : late ? html`<span class="text-danger">vencido</span>` : ''}</div>
               </div>
@@ -174,6 +182,7 @@ export function openVendor(id) {
         ${v.contractDate ? html`<p class="muted small">Contrato assinado em ${fmtDate(v.contractDate)}</p>` : ''}`;
     },
     footer: html`<button type="button" class="btn btn-danger-ghost" data-act="del">${icon('trash')}<span>Excluir</span></button><span class="spacer"></span><button type="button" class="btn btn-primary" data-act="edit">${icon('edit')}<span>Editar</span></button>`,
+    onClose: () => { if (selOn(`vendor:${id}`)) selEnd(); },
     onMount(m) {
       const handler = async (e) => {
         const a = e.target.closest('[data-act]');
@@ -181,7 +190,15 @@ export function openVendor(id) {
         const v = byId('vendors', id);
         if (!v) return;
         const pid = a.dataset.id;
+        if (a.dataset.act.startsWith('sel-') && a.dataset.act !== 'sel-start' && a.dataset.act !== 'sel-toggle') {
+          if (a.dataset.act === 'sel-all') e.preventDefault();
+          await selAction(a.dataset.act, paymentsOf(id).map((p) => p.id));
+          return;
+        }
         switch (a.dataset.act) {
+          case 'sel-start': selStart(`vendor:${id}`); break;
+          case 'sel-toggle': e.preventDefault(); selToggle(pid); break;
+          case 'splitall': splitAllDialog({ vendors: [v] }); break;
           case 'edit': vendorForm(v); break;
           case 'del':
             if (await confirmDialog('Excluir este fornecedor? As parcelas ligadas a ele também serão excluídas. Os arquivos continuam em Documentos.')) {
