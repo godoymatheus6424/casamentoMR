@@ -15,6 +15,8 @@ import notes from './views/notes.js';
 import gifts from './views/gifts.js';
 import settings, { deleteMyAccount } from './views/settings.js';
 import { PLANNER_ROUTES, PLANNER_TABS } from './views/planner.js';
+import { isFinHash, renderFinShell, renderFinView, leaveFin } from './fin/shell.js';
+import { fin, loadFin } from './fin/data.js';
 
 const COUPLE_ROUTES = [
   { id: 'inicio', label: 'Visão geral', short: 'Início', icon: 'home', view: dashboard },
@@ -30,6 +32,9 @@ const COUPLE_ROUTES = [
   { id: 'config', label: 'Configurações', icon: 'settings', view: settings },
 ];
 const COUPLE_TABS = ['inicio', 'tarefas', 'fornecedores', 'convidados'];
+// Finanças: só para os noivos (família e assessoria ficam só no casamento).
+const finAllowed = () => ['owner', 'couple'].includes(state.workspace?.role);
+const FIN_LINK = { id: 'fin', label: 'Finanças', icon: 'chart' };
 // Noivos e família usam o planejador completo; a assessoria tem telas próprias, só de consulta.
 const plannerWs = () => state.workspace?.role === 'planner';
 const routes = () => (plannerWs() ? PLANNER_ROUTES : COUPLE_ROUTES);
@@ -68,8 +73,9 @@ async function startSession(me) {
   if (invite) return renderAcceptInvite(invite);
   // Assessoria sem casamento aberto (ainda não recebeu acesso, ou saiu de todos): fica no perfil.
   if (!me.workspace) return renderPlannerHome();
-  // Vindo da página inicial ou das telas de acesso, abre a Visão geral.
-  if (/^#?\/?(entrar|cadastro|esqueci|redefinir)?(\?.*)?$/.test(location.hash)) history.replaceState(null, '', '#/inicio');
+  // Vindo da página inicial ou das telas de acesso: os noivos abrem nas finanças; os demais, no casamento.
+  if (/^#?\/?(entrar|cadastro|esqueci|redefinir)?(\?.*)?$/.test(location.hash)) history.replaceState(null, '', finAllowed() ? '#/fin' : '#/inicio');
+  else if (isFinHash() && !finAllowed()) history.replaceState(null, '', '#/inicio');
   await loadAll();
   renderShell();
 }
@@ -236,7 +242,7 @@ window.addEventListener('hashchange', () => { if (!state.user && state.status) r
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.user && Date.now() - state.loadedAt > 60e3) {
-    refreshMe().then(loadAll).catch(() => {});
+    refreshMe().then(loadAll).then(() => (fin.loaded && isFinHash() ? loadFin() : null)).catch(() => {});
   }
 });
 
@@ -244,7 +250,36 @@ document.addEventListener('visibilitychange', () => {
 // Estrutura principal
 // ---------------------------------------------------------------------------
 let shellBound = false;
+let shellMode = null; // 'fin' (finanças) ou 'wedding' (casamento)
+const wantedMode = () => (isFinHash() && finAllowed() ? 'fin' : 'wedding');
+// Monta a estrutura certa para o endereço atual (a de finanças ou a do casamento), se ainda não estiver na tela.
+function ensureShell() {
+  const mode = wantedMode();
+  if (mode === shellMode && document.getElementById('view')) return;
+  shellMode = mode;
+  if (mode === 'fin') renderFinShell(app);
+  else { leaveFin(); renderWeddingShell(); }
+}
 function renderShell() {
+  shellMode = null;
+  ensureShell();
+  if (!shellBound) {
+    shellBound = true;
+    window.addEventListener('hashchange', () => {
+      if (!state.user) return;
+      closeAllModals();
+      const invite = inviteTokenFromHash();
+      if (invite) { shellMode = null; renderAcceptInvite(invite); return; }
+      if (isFinHash() && !finAllowed()) { history.replaceState(null, '', '#/inicio'); }
+      ensureShell();
+      renderView(true);
+    });
+    onChange(() => { if (state.user && document.getElementById('view')) renderView(false); });
+    window.addEventListener('app:logout', logout);
+  }
+  renderView(true);
+}
+function renderWeddingShell() {
   app.innerHTML = String(html`<div class="shell">
     <aside class="sidebar">
       <a class="brand" href="#/inicio">
@@ -253,6 +288,7 @@ function renderShell() {
       </a>
       ${isPlanner() ? html`<button type="button" class="ws-switch" data-switch title="Meus casamentos">${icon('users')}<span>Meus casamentos</span></button>` : ''}
       <nav class="nav" aria-label="Seções">
+        ${finAllowed() ? html`<a href="#/fin" class="nav-fin" title="Finanças">${icon('chart')}<span>Finanças</span></a>` : ''}
         ${routes().map((r) => html`<a href="#/${r.id}" data-route="${r.id}" title="${r.label}">${icon(r.icon)}<span>${r.label}</span></a>`)}
       </nav>
       <div class="side-foot">
@@ -269,17 +305,6 @@ function renderShell() {
   app.querySelector('[data-logout]').onclick = logout;
   app.querySelector('[data-more]').onclick = openMore;
   app.querySelector('[data-switch]')?.addEventListener('click', openSwitcher);
-  if (!shellBound) {
-    shellBound = true;
-    window.addEventListener('hashchange', () => {
-      if (!state.user) return;
-      closeAllModals();
-      const invite = inviteTokenFromHash();
-      if (invite) renderAcceptInvite(invite); else renderView(true);
-    });
-    onChange(() => { if (state.user) renderView(false); });
-  }
-  renderView(true);
 }
 
 async function logout() {
@@ -295,6 +320,7 @@ function openMore() {
     title: 'Menu',
     size: 'sheet',
     body: html`<nav class="more-grid">
+      ${finAllowed() ? html`<a href="#/fin" class="more-fin">${icon(FIN_LINK.icon)}<span>${FIN_LINK.label}</span></a>` : ''}
       ${routes().map((r) => html`<a href="#/${r.id}" class="${r.id === current ? 'active' : ''}">${icon(r.icon)}<span>${r.short || r.label}</span></a>`)}
     </nav>
     ${isPlanner() ? html`<button type="button" class="btn btn-ghost btn-block more-switch" data-sw>${icon('users')}<span>Meus casamentos</span></button>` : ''}
@@ -343,6 +369,7 @@ function renderBanner() {
 }
 
 function renderView(navigated) {
+  if (shellMode === 'fin') return renderFinView(navigated);
   const el = document.getElementById('view');
   if (!el) return;
   const r = routeFromHash();

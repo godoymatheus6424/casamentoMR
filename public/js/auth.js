@@ -87,8 +87,8 @@ export function renderAuth(msg = '') {
   if (route === 'esqueci') return renderForgot();
   if (route === 'redefinir') return renderReset(params.get('token') || '');
   if (route === 'convite') { const err = takeError(params); return renderInvite(params.get('token') || '', 'signup', err); }
-  // Endereço principal sem sessão: página de apresentação. Qualquer outro (#/entrar, páginas do app): login.
-  if (!route && !msg) return renderLanding();
+  // Endereço principal sem sessão: página de apresentação (só com cadastro aberto). Qualquer outro: login.
+  if (!route && !msg && state.status.signupOpen) return renderLanding();
   return renderLogin(msg || takeError(params), params.get('perfil') === 'assessoria' ? 'planner' : 'couple');
 }
 

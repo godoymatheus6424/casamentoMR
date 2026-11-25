@@ -678,7 +678,7 @@ route('GET', '/api/auth/google/callback', async ({ req, res, url }) => {
     }
     createSession(req, res, userId, true, inv.workspace_id);
     res.setHeader('Set-Cookie', [res.getHeader('Set-Cookie'), stateCookie(req, '', 0)]);
-    return redirect(res, '/#/inicio');
+    return redirect(res, '/#/');
   }
 
   const kind = st.kind;
@@ -706,7 +706,7 @@ route('GET', '/api/auth/google/callback', async ({ req, res, url }) => {
   }
   createSession(req, res, userId, true, ws);
   res.setHeader('Set-Cookie', [res.getHeader('Set-Cookie'), stateCookie(req, '', 0)]);
-  redirect(res, '/#/inicio');
+  redirect(res, '/#/');
 }, { auth: false });
 
 route('POST', '/api/password/forgot', async ({ req, res }) => {
@@ -1192,6 +1192,124 @@ route('DELETE', '/api/files/:id', ({ res, params, session }) => {
 }, { team: true });
 
 // ---------------------------------------------------------------------------
+// Finanças pessoais
+// ---------------------------------------------------------------------------
+// Cada noivo(a) tem as próprias finanças (ligadas à conta, não ao casamento). A "visão do casal" junta as
+// duas, mais os pagamentos dos fornecedores do casamento. Família e assessoria não têm acesso.
+const FIN_COLLS = new Set(['accounts', 'cards', 'categories', 'transactions', 'recurring', 'goals']);
+const FIN_DENIED = 'As finanças ficam só com os noivos.';
+const FIN_DEFAULT_CATEGORIES = [
+  ['income', 'Salário', '💼', '#34C759'], ['income', 'Freelance e extras', '💻', '#30B0C7'], ['income', 'Rendimentos', '📈', '#5AC8FA'],
+  ['income', 'Reembolsos', '↩️', '#64D2FF'], ['income', 'Presentes', '🎁', '#FF9F0A'], ['income', 'Outras receitas', '💰', '#A2845E'],
+  ['expense', 'Moradia', '🏠', '#007AFF'], ['expense', 'Contas da casa', '💡', '#5856D6'], ['expense', 'Mercado', '🛒', '#34C759'],
+  ['expense', 'Restaurantes e delivery', '🍽️', '#FF9500'], ['expense', 'Transporte', '🚗', '#5AC8FA'], ['expense', 'Saúde', '💊', '#FF3B30'],
+  ['expense', 'Educação', '📚', '#AF52DE'], ['expense', 'Lazer', '🎉', '#FF2D55'], ['expense', 'Assinaturas', '📺', '#FF6482'],
+  ['expense', 'Compras', '🛍️', '#FFCC00'], ['expense', 'Cuidados pessoais', '💇', '#BF5AF2'], ['expense', 'Pets', '🐾', '#A2845E'],
+  ['expense', 'Viagens', '✈️', '#32ADE6'], ['expense', 'Impostos e taxas', '🧾', '#8E8E93'], ['expense', 'Presentes e doações', '🎁', '#FF9F0A'],
+  ['expense', 'Investimentos', '📊', '#30D158'], ['expense', 'Outros gastos', '📦', '#8E8E93'],
+];
+function checkFin(session) {
+  if (!MANAGER_ROLES.has(session.role)) throw new HttpError(403, FIN_DENIED);
+}
+function checkFinColl(c) {
+  if (!FIN_COLLS.has(c)) throw new HttpError(404, 'Coleção desconhecida.');
+  return c;
+}
+const finRow = (r) => ({ ...JSON.parse(r.data), id: r.id, _created: r.created_at, _updated: r.updated_at });
+function finSettings(userId) {
+  try { return JSON.parse(S('SELECT fin_settings FROM users WHERE id = ?').get(userId)?.fin_settings || '{}'); } catch { return {}; }
+}
+function finItems(userId) {
+  const items = {};
+  for (const c of FIN_COLLS) items[c] = [];
+  for (const r of S('SELECT * FROM fin_items WHERE user_id = ? ORDER BY created_at').all(userId)) if (items[r.coll]) items[r.coll].push(finRow(r));
+  return items;
+}
+function finInsert(userId, coll, data, now = Date.now()) {
+  const id = crypto.randomUUID();
+  S('INSERT INTO fin_items (id, user_id, coll, data, created_at, updated_at) VALUES (?,?,?,?,?,?)').run(id, userId, coll, JSON.stringify(data), now, now);
+  return { ...data, id, _created: now, _updated: now };
+}
+// Primeira vez: categorias prontas e uma conta, para já sair lançando.
+function finSeed(userId) {
+  const st = finSettings(userId);
+  if (st.seeded) return;
+  tx(() => {
+    const now = Date.now();
+    FIN_DEFAULT_CATEGORIES.forEach(([kind, name, emoji, color], i) => finInsert(userId, 'categories', { kind, name, emoji, color, order: i }, now + i));
+    finInsert(userId, 'accounts', { name: 'Conta principal', type: 'corrente', initialBalance: 0, color: '#007AFF' }, now + 100);
+    S('UPDATE users SET fin_settings = ? WHERE id = ?').run(JSON.stringify({ ...st, seeded: true }), userId);
+  });
+}
+
+route('GET', '/api/fin', ({ res, session }) => {
+  checkFin(session);
+  finSeed(session.user_id);
+  const ws = session.workspace_id;
+  // O par (o outro noivo/a deste casamento), se tiver liberado as finanças para a visão do casal.
+  const p = S(`SELECT u.id, u.name FROM memberships m JOIN users u ON u.id = m.user_id
+    WHERE m.workspace_id = ? AND m.role IN ('owner', 'couple') AND u.id <> ? ORDER BY m.created_at LIMIT 1`).get(ws, session.user_id);
+  let partner = null;
+  if (p) {
+    const ps = finSettings(p.id);
+    partner = { id: p.id, name: p.name, shared: ps.shareWithCouple !== false };
+    if (partner.shared) { partner.items = finItems(p.id); partner.settings = { weddingAccountId: ps.weddingAccountId || '' }; }
+  }
+  const wedding = { payments: [], vendors: [] };
+  for (const r of S("SELECT * FROM items WHERE workspace_id = ? AND coll IN ('payments', 'vendors')").all(ws)) {
+    const it = rowToItem(r);
+    if (r.coll === 'vendors') wedding.vendors.push({ id: it.id, name: it.name, category: it.category });
+    else wedding.payments.push({ id: it.id, vendorId: it.vendorId, description: it.description, amount: it.amount, dueDate: it.dueDate, paid: !!it.paid, paidDate: it.paidDate, method: it.method });
+  }
+  send(res, 200, { settings: finSettings(session.user_id), items: finItems(session.user_id), partner, wedding });
+});
+
+route('PUT', '/api/fin/settings', async ({ req, res, session }) => {
+  checkFin(session);
+  const b = cleanData(await readJson(req));
+  const st = { ...finSettings(session.user_id), ...b, seeded: true };
+  const data = JSON.stringify(st);
+  if (data.length > 20_000) throw new HttpError(413, 'Ajustes muito grandes.');
+  S('UPDATE users SET fin_settings = ? WHERE id = ?').run(data, session.user_id);
+  send(res, 200, st);
+});
+
+route('POST', '/api/fin/:coll', async ({ req, res, params, session }) => {
+  checkFin(session);
+  const coll = checkFinColl(params.coll);
+  send(res, 201, finInsert(session.user_id, coll, cleanData(await readJson(req))));
+});
+
+route('POST', '/api/fin/:coll/bulk', async ({ req, res, params, session }) => {
+  checkFin(session);
+  const coll = checkFinColl(params.coll);
+  const b = await readJson(req);
+  if (!Array.isArray(b.items) || !b.items.length || b.items.length > 500) throw new HttpError(400, 'Lista inválida.');
+  const now = Date.now();
+  send(res, 201, tx(() => b.items.map((d, i) => finInsert(session.user_id, coll, cleanData(d), now + i))));
+});
+
+route('PUT', '/api/fin/:coll/:id', async ({ req, res, params, session }) => {
+  checkFin(session);
+  const coll = checkFinColl(params.coll);
+  const row = S('SELECT * FROM fin_items WHERE id = ? AND coll = ? AND user_id = ?').get(params.id, coll, session.user_id);
+  if (!row) throw new HttpError(404, 'Registro não encontrado (talvez tenha sido excluído).');
+  const merged = { ...JSON.parse(row.data), ...cleanData(await readJson(req)) };
+  const now = Date.now();
+  S('UPDATE fin_items SET data = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(merged), now, row.id);
+  send(res, 200, { ...merged, id: row.id, _created: row.created_at, _updated: now });
+});
+
+route('POST', '/api/fin/:coll/delete', async ({ req, res, params, session }) => {
+  checkFin(session);
+  const coll = checkFinColl(params.coll);
+  const b = await readJson(req);
+  if (!Array.isArray(b.ids) || !b.ids.length || b.ids.length > 500 || !b.ids.every(isUuid)) throw new HttpError(400, 'Lista inválida.');
+  const n = tx(() => b.ids.reduce((acc, id) => acc + S('DELETE FROM fin_items WHERE id = ? AND coll = ? AND user_id = ?').run(id, coll, session.user_id).changes, 0));
+  send(res, 200, { ok: true, deleted: n });
+});
+
+// ---------------------------------------------------------------------------
 // Pagamentos na agenda (arquivo .ics)
 // ---------------------------------------------------------------------------
 // O app pede um link curto e abre o arquivo por ele. O link não depende do cookie: no iPhone, o app instalado
@@ -1232,6 +1350,7 @@ route('GET', '/api/export', ({ res, session }) => {
   const body = JSON.stringify({
     app: 'planejador-casamento', version: 2, exportedAt: new Date().toISOString(),
     settings: getSettings(ws), ...exportWorkspace(ws),
+    ...(MANAGER_ROLES.has(session.role) ? { finance: { settings: finSettings(session.user_id), items: finItems(session.user_id) } } : {}),
   }, null, 2);
   const stamp = new Date().toISOString().slice(0, 10);
   res.writeHead(200, {

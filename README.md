@@ -37,6 +37,18 @@ No celular, use **"Adicionar à tela de início"** para abrir o site como se fos
 | **Presentes** | Quem deu o quê, com controle de agradecimentos enviados. |
 | **Configurações** | Detalhes do casamento, troca de senha, usuários, dispositivos conectados, tema claro ou escuro e backup. |
 
+## Finanças
+
+Ao entrar, os noivos caem na área de **Finanças** (visual claro, pensado para o celular). O casamento continua igual, no coração do canto superior ou em **Mais › Casamento**; do casamento, volta-se pelo item **Finanças** do menu.
+
+- **Contas** (banco, carteira, poupança, investimento, vale) com saldo; **transferências** entre elas.
+- **Receitas e despesas** com categoria, conta ou cartão, "de onde vem / para onde vai", situação (pago/pendente) e **parcelamento**.
+- **Fixos**: salário e outras rendas, aluguel, contas, assinaturas (todo mês, a cada X meses ou anual). Aparecem como previstos e são confirmados em um toque; lançar à mão com o mesmo nome também conta.
+- **Cartões** com dia de fechamento e vencimento: cada compra e parcela cai na fatura certa; limite usado; pagar a fatura debita a conta.
+- **Orçamento** (limite por categoria), **metas**, **relatórios** (12 meses, saldo previsto, categorias, fixos x variáveis, para onde vai) e **exportação em CSV**.
+- **Do casal**: cada noivo(a) tem as próprias finanças e pode liberar (Mais › Ajustes) para o par ver, só leitura, na visão "Do casal". Família e assessoria não têm acesso.
+- As **parcelas dos fornecedores** do casamento entram sozinhas como despesas da categoria "Casamento".
+
 ## Segurança
 
 - Senhas guardadas com **scrypt** (criptografia própria para senhas). Elas nunca ficam salvas em texto.
@@ -69,7 +81,7 @@ O projeto já vem com um `Dockerfile`, então o Easypanel monta e roda o site so
 2. **Source:** escolha *GitHub* e selecione o repositório, branch `main`.
 3. **Build:** escolha **Dockerfile** (caminho `Dockerfile`).
 4. **Mounts → Add Volume Mount:** nome `data`, caminho de montagem **`/data`**. ⚠️ Esse passo é essencial: é aqui que ficam o banco e os contratos. Sem ele, tudo se perde a cada atualização.
-5. **Environment:** o Dockerfile já define `PORT=3000`, `DATA_DIR=/data`, `TRUST_PROXY=1` e `SIGNUP_OPEN=1` (cadastro aberto pelo site). Defina também `APP_URL=https://seudominio.com.br` (usado nos links de senha e convite) para enviar e-mails, `RESEND_API_KEY` e `MAIL_FROM`; e, para o botão **Continuar com o Google**, `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` (no Google Cloud, o endereço de retorno é `https://seudominio.com.br/api/auth/google/callback`). Para um site de um casamento só, sem cadastro público, use `SIGNUP_OPEN=0`.
+5. **Environment:** o Dockerfile já define `PORT=3000`, `DATA_DIR=/data`, `TRUST_PROXY=1` e `SIGNUP_OPEN=0` (site fechado: só entra quem já tem conta ou recebe convite dos noivos; `SIGNUP_OPEN=1` reabre o cadastro). Defina também `APP_URL=https://seudominio.com.br` (usado nos links de senha e convite) para enviar e-mails, `RESEND_API_KEY` e `MAIL_FROM`; e, para o botão **Continuar com o Google**, `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` (no Google Cloud, o endereço de retorno é `https://seudominio.com.br/api/auth/google/callback`). Para um site de um casamento só, sem cadastro público, use `SIGNUP_OPEN=0`.
 6. Clique em **Deploy**.
 
 **3. Aponte o domínio.**
@@ -105,7 +117,7 @@ Outras opções: `HOST` (padrão `0.0.0.0`) e `MAX_UPLOAD_MB` (padrão 25).
 
 ## Vários casais (cadastro aberto)
 
-O mesmo servidor pode atender vários casais, cada um no seu espaço isolado, com teste grátis e assinatura. Na imagem Docker o cadastro público já vem aberto (`SIGNUP_OPEN=1`); rodando pelo `iniciar.bat`, ou com `SIGNUP_OPEN=0`, o site funciona como uma instalação própria (um casamento). O plano completo, com as fases e as variáveis de ambiente, está em [docs/PLANO-MULTICASAL.md](docs/PLANO-MULTICASAL.md).
+O mesmo servidor pode atender vários casais, cada um no seu espaço isolado, com teste grátis e assinatura. Na imagem Docker o cadastro público vem fechado (`SIGNUP_OPEN=0`; use `SIGNUP_OPEN=1` para abrir); rodando pelo `iniciar.bat`, ou com `SIGNUP_OPEN=0`, o site funciona como uma instalação própria (um casamento). O plano completo, com as fases e as variáveis de ambiente, está em [docs/PLANO-MULTICASAL.md](docs/PLANO-MULTICASAL.md).
 
 Administração pela linha de comando (no Easypanel, pela aba **Console** do app):
 
