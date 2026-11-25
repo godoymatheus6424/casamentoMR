@@ -270,6 +270,35 @@ const listNames = (items) => {
   return items.length > 2 ? `${names.join(', ')} e mais ${items.length - 2}` : names.join(' e ');
 };
 
+// Meia-lua do mês: enche do verde (começo) ao vermelho (fim), com o dia de hoje grande no centro.
+function monthGauge(dt, weekday, monthName) {
+  const day = dt.getDate();
+  const last = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
+  const p = last > 1 ? (day - 1) / (last - 1) : 1;
+  const left = last - day;
+  const R = 86, cx = 100, cy = 100;
+  const ang = Math.PI * (1 - p);
+  const kx = (cx + R * Math.cos(ang)).toFixed(1), ky = (cy - R * Math.sin(ang)).toFixed(1);
+  const hue = Math.round(130 * (1 - p)); // 130 = verde, 0 = vermelho
+  const arc = `M${cx - R} ${cy} A${R} ${R} 0 0 1 ${cx + R} ${cy}`;
+  const mon = monthName.slice(0, 3);
+  return html`<div class="fin-gauge" style="--knob:hsl(${hue} 75% 42%)">
+    <div class="fin-gauge-arc">
+    <svg viewBox="0 0 200 112" aria-hidden="true">
+      <defs><linearGradient id="fin-month-grad" x1="0" x2="1" y1="0" y2="0">
+        <stop offset="0" stop-color="#34C759"/><stop offset=".55" stop-color="#FFCC00"/><stop offset=".8" stop-color="#FF9500"/><stop offset="1" stop-color="#FF3B30"/>
+      </linearGradient></defs>
+      <path d="${arc}" fill="none" stroke="var(--f-track)" stroke-width="12" stroke-linecap="round"/>
+      <path d="${arc}" fill="none" stroke="url(#fin-month-grad)" stroke-width="12" stroke-linecap="round" pathLength="100" stroke-dasharray="${(p * 100).toFixed(2)} 100"/>
+      <circle cx="${kx}" cy="${ky}" r="9" fill="#fff" stroke="var(--knob)" stroke-width="4"/>
+    </svg>
+    <div class="fin-gauge-center"><strong>${day}</strong></div>
+    </div>
+    <div class="fin-gauge-legend"><span>1 ${mon}</span><b>${weekday}</b><span>${last} ${mon}</span></div>
+    <p class="fin-gauge-left">${left === 0 ? 'Último dia do mês' : left === 1 ? 'Falta 1 dia para acabar o mês' : `Faltam ${left} dias para acabar ${monthName}`}</p>
+  </div>`;
+}
+
 function home() {
   const today = todayISO();
   const now = thisMonth();
@@ -303,7 +332,7 @@ function home() {
     <div class="fin-home2">
       <div class="h2-left">
       <section class="fin-card fin-today">
-        <div class="fin-today-date"><strong>${dt.getDate()}</strong><span>${weekday}<small>${monthName}</small></span></div>
+        ${monthGauge(dt, weekday, monthName)}
         <div class="fin-today-msg">
           <p class="big">${todayOut.length ? html`Hoje vence ${listNames(todayOut)}.` : 'Sem gastos programados para hoje.'}</p>
           ${todayIn.length ? html`<p>💰 Hoje entra ${listNames(todayIn)}.</p>` : ''}
