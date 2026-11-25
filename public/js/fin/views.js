@@ -4,17 +4,17 @@ import { fin, setScope, toggleHidden, valuesHidden, saveFinSettings, fupdate } f
 import {
   thisMonth, addMonths, monthLabel, monthOf, monthSummary, monthEntries, accountBalances, totalBalance, upcoming, history,
   recurringTotals, categoryOf, myCategories, sources, isCouple, partnerName, firstName, FREQ_LABEL, ACCOUNT_TYPES, mySide, autoFixed,
-  invoiceDue, invoiceClosing, dayIn, invoiceEntries, invoiceTotal, currentInvoiceKey, cardUsed, recurringHits, fulfilledRecurring, WEDDING_CAT,
+  invoiceDue, invoiceClosing, dayIn, forecast, dailyBudget, dailyLeft, invoiceEntries, invoiceTotal, currentInvoiceKey, cardUsed, recurringHits, fulfilledRecurring, WEDDING_CAT,
 } from './model.js';
 import {
   txForm, recurringForm, confirmOccurrence, markPaid, accountForm, cardForm, payInvoiceForm, reopenInvoice, categoryForm,
-  goalForm, goalDepositForm, entryInfo,
+  goalForm, goalDepositForm, entryInfo, adjustBalanceForm, dailyBudgetForm,
 } from './forms.js';
 import { state } from '../store.js';
 import { names } from '../domain.js';
-import { html, icon, raw, money, fmtDate, todayISO, sum, norm, run, downloadCSV, csvMoney, toast, openModal } from '../ui.js';
+import { html, icon, raw, money, fmtDate, todayISO, shiftISO, sum, norm, run, downloadCSV, csvMoney, toast, openModal } from '../ui.js';
 
-export const ui = { month: thisMonth(), day: '', ext: 'tudo', q: '', plan: 'fixos', catKind: 'expense', cardKey: '', cardId: '' };
+export const ui = { month: thisMonth(), day: '', wday: '', ext: 'tudo', q: '', plan: 'fixos', catKind: 'expense', cardKey: '', cardId: '' };
 
 // ---------------------------------------------------------------------------
 // Peças
@@ -87,7 +87,7 @@ function entryRow(e, { table = false, showDate = false } = {}) {
   return html`<div class="fin-row ${table ? 'tr' : ''}" role="button" tabindex="0" data-act="entry" data-id="${e.id}" data-month="${e.month || ''}">
     ${bubble(c)}
     <span class="fin-row-main">
-      <span class="fin-row-title">${e.description || c.name}${e.recurringId || e.rec ? html`<span class="fin-mini" title="Fixo">${icon('repeat')}</span>` : ''}${ownerTag(e.owner)}</span>
+      <span class="fin-row-title">${e.description || c.name}${e.recurringId || e.rec ? html`<span class="fin-mini" title="Fixo">${icon('repeat')}</span>` : ''}${e.attachments?.length ? html`<span class="fin-mini" title="Tem comprovante">${icon('clip')}</span>` : ''}${ownerTag(e.owner)}</span>
       <span class="fin-row-meta ${table ? 'm-only' : ''}">${meta}</span>
       ${table ? html`<span class="fin-row-meta d-only">${[showDate && shortDate(e.date), e.party, e.installments && `parcela ${e.installment}/${e.installments}`, e.shareLabel].filter(Boolean).join(' · ') || ' '}</span>` : ''}
     </span>
@@ -132,15 +132,6 @@ function bars(data, { height = 170 } = {}) {
 }
 const legend = (items) => html`<div class="fin-legend">${items.map(([cls, label]) => html`<span><i class="${cls}"></i>${label}</span>`)}</div>`;
 
-// Saldo previsto no fim de um mês (do mês atual em diante): saldo de hoje + o que ainda falta entrar e sair.
-function forecast(key) {
-  let bal = totalBalance();
-  for (let k = thisMonth(); k <= key; k = addMonths(k, 1)) {
-    const s = monthSummary(k);
-    bal += (s.income.total - s.income.done) - (s.expense.total - s.expense.done);
-  }
-  return bal;
-}
 
 // ---------------------------------------------------------------------------
 // Início: o mês em foco (o que falta, calendário e o que ainda vem)
@@ -204,15 +195,12 @@ function calendar(key, map) {
   </div>`;
 }
 
-function home() {
+function monthView() {
   const key = ui.month;
   const now = thisMonth();
   const today = todayISO();
   const isNow = key === now;
   const s = monthSummary(key);
-  const name = firstName(state.user?.name);
-  const hour = new Date().getHours();
-  const hello = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
   const map = dayMap(key);
   const all = [...map.values()].flat();
   // Dia escolhido: hoje (no mês atual) ou o primeiro dia com movimento.
@@ -229,7 +217,7 @@ function home() {
   const dayLabel = (() => { const t = new Date(`${ui.day}T12:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }); return t.charAt(0).toUpperCase() + t.slice(1); })();
 
   return html`
-    ${pageHead(isCouple() ? 'Finanças do casal' : 'Finanças', { sub: `${hello}${name ? `, ${name}` : ''}`, month: true, actions: html`<a class="fin-round m-only" href="#/inicio" title="Casamento" aria-label="Abrir o casamento">${icon('heart')}</a>` })}
+    ${pageHead('Visão geral do mês', { back: '#/fin', month: true })}
     <div class="fin-month-view">
       <section class="fv-kpis">
         ${key < now ? html`
@@ -266,6 +254,109 @@ function home() {
     </div>
   `;
 }
+// ---------------------------------------------------------------------------
+// Início: assistente do dia, linha da semana e o que vem depois
+// ---------------------------------------------------------------------------
+// Movimentos de vários meses juntos, por dia (para a semana e os próximos dias).
+function daysAhead(months = 3) {
+  const map = new Map();
+  for (let i = -1; i < months; i++) for (const [d, items] of dayMap(addMonths(thisMonth(), i))) map.set(d, [...(map.get(d) || []), ...items]);
+  return map;
+}
+const daysUntil = (iso) => Math.round((new Date(`${iso}T12:00`) - new Date(`${todayISO()}T12:00`)) / 86400e3);
+const whenLabel = (n) => (n === 0 ? 'hoje' : n === 1 ? 'amanhã' : n < 0 ? `há ${-n} ${-n === 1 ? 'dia' : 'dias'}` : `daqui ${n} dias`);
+const listNames = (items) => {
+  const names = items.slice(0, 2).map((e) => `${e.description} (${money(e.amount)})`);
+  return items.length > 2 ? `${names.join(', ')} e mais ${items.length - 2}` : names.join(' e ');
+};
+
+function home() {
+  const today = todayISO();
+  const now = thisMonth();
+  const map = daysAhead(3);
+  const name = firstName(state.user?.name);
+  const hour = new Date().getHours();
+  const hello = hour < 5 ? 'Boa noite' : hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
+  const week = Array.from({ length: 7 }, (_, i) => shiftISO(today, { d: i }));
+  if (!week.includes(ui.wday)) ui.wday = today;
+  const pending = (d) => (map.get(d) || []).filter((e) => !e.paid);
+  const todayOut = pending(today).filter((e) => e.kind === 'expense');
+  const todayIn = pending(today).filter((e) => e.kind === 'income');
+  const weekOut = week.flatMap((d) => pending(d)).filter((e) => e.kind === 'expense');
+  const late = [...map.entries()].filter(([d]) => d < today).flatMap(([, items]) => items.filter((e) => !e.paid));
+  const after = [...map.entries()].filter(([d]) => d > week[6]).sort(([a], [b]) => a.localeCompare(b)).flatMap(([, items]) => items.filter((e) => !e.paid)).slice(0, 6);
+  const selItems = (map.get(ui.wday) || []).sort((a, b) => (a.kind === 'income' ? -1 : 1) - (b.kind === 'income' ? -1 : 1));
+  const bal = totalBalance();
+  const end = forecast(now);
+  const daily = dailyBudget();
+  const dt = new Date(`${today}T12:00`);
+  const weekday = ((w) => w.charAt(0).toUpperCase() + w.slice(1))(dt.toLocaleDateString('pt-BR', { weekday: 'long' }));
+  const monthName = dt.toLocaleDateString('pt-BR', { month: 'long' });
+  const selLabel = ui.wday === today ? 'Hoje' : (() => { const t = new Date(`${ui.wday}T12:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }); return t.charAt(0).toUpperCase() + t.slice(1); })();
+
+  return html`
+    <header class="fin-head fin-head-home">
+      <div class="fin-head-row"><div class="fin-head-title"><p class="fin-sub">${hello}${name ? `, ${name}` : ''}</p></div>
+        <div class="fin-head-actions">${eyeBtn()}<a class="fin-round m-only" href="#/inicio" title="Casamento" aria-label="Abrir o casamento">${icon('heart')}</a></div></div>
+      ${coupleBanner()}
+    </header>
+    <div class="fin-home2">
+      <div class="h2-left">
+      <section class="fin-card fin-today">
+        <div class="fin-today-date"><strong>${dt.getDate()}</strong><span>${weekday}<small>${monthName}</small></span></div>
+        <div class="fin-today-msg">
+          <p class="big">${todayOut.length ? html`Hoje vence ${listNames(todayOut)}.` : 'Sem gastos programados para hoje.'}</p>
+          ${todayIn.length ? html`<p>💰 Hoje entra ${listNames(todayIn)}.</p>` : ''}
+          <p>${weekOut.length ? html`Nos próximos 7 dias saem <b>${amt(sum(weekOut, (e) => e.amount))}</b> em ${weekOut.length} ${weekOut.length === 1 ? 'conta' : 'contas'}.` : 'Semana tranquila: nada a pagar nos próximos 7 dias.'}</p>
+          ${late.length ? html`<p class="red">⚠️ ${late.length === 1 ? 'Tem 1 conta atrasada' : `Tem ${late.length} contas atrasadas`} (${amt(sum(late, (e) => e.amount))}). <button type="button" class="fin-link" data-act="older">Resolver</button></p>` : ''}
+        </div>
+      </section>
+
+      <section class="fin-card fin-week">
+        <div class="fin-week-strip">${week.map((d) => {
+          const items = map.get(d) || [];
+          const out = items.filter((e) => e.kind === 'expense' && !e.paid);
+          const inc = items.filter((e) => e.kind === 'income' && !e.paid);
+          const wd = new Date(`${d}T12:00`).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
+          return html`<button type="button" class="fin-wday ${d === ui.wday ? 'sel' : ''} ${d === today ? 'today' : ''}" data-act="week-day" data-v="${d}">
+            <small>${d === today ? 'hoje' : wd}</small><strong>${Number(d.slice(8))}</strong>
+            <span class="fin-dots">${out.length ? html`<i class="out"></i>` : ''}${inc.length ? html`<i class="in"></i>` : ''}</span>
+            ${out.length ? html`<em class="amt">−${compact(sum(out, (e) => e.amount))}</em>` : html`<em> </em>`}
+          </button>`;
+        })}</div>
+        <div class="fin-week-day">
+          <h3>${selLabel}</h3>
+          ${selItems.length ? html`<div class="fin-list">${selItems.map(dayRow)}</div>` : html`<p class="fin-muted">Nada programado${ui.wday === today ? ' para hoje' : ' neste dia'}.</p>`}
+        </div>
+      </section>
+
+      <a class="fin-card fin-goto" href="#/fin/mes">${icon('calendar')}<span><b>Visão geral do mês</b><small>Calendário de ${monthLabel(now).toLowerCase()} com o previsto de cada dia</small></span>${icon('chevron')}</a>
+      </div>
+      <div class="h2-right">
+      <section class="fv-money">
+        <div class="fin-card fin-kpi">
+          <span class="fin-label">Saldo hoje</span>
+          <strong class="fin-kpi-amt ${bal < 0 ? 'neg' : ''}">${amt(bal)}</strong>
+          <button type="button" class="fin-link" data-act="adjust">${icon('edit')} Não bate? Ajustar saldo</button>
+        </div>
+        <div class="fin-card fin-kpi fin-kpi-hero">
+          <span class="fin-label">Previsão para o fim do mês</span>
+          <strong class="fin-kpi-amt ${end < 0 ? 'neg' : 'pos'}">${amt(end)}</strong>
+          <small>${!daily ? 'sem contar mercado, comida e outros gastos do dia a dia' : dailyLeft(now) > 0 ? html`já descontando ${amt(dailyLeft(now))} que ainda devem sair no dia a dia (de ${amt(daily)} por mês)` : html`os ${amt(daily)} de gastos do dia a dia deste mês já foram lançados`}</small>
+          <button type="button" class="fin-link" data-act="daily">${icon('edit')} ${daily ? 'Mudar gastos do dia a dia' : 'Incluir gastos do dia a dia'}</button>
+        </div>
+      </section>
+      <section class="fin-section fv-after">
+        ${sectionHead('Depois desta semana', html`<a href="#/fin/mes">Mês inteiro</a>`)}
+        ${after.length ? html`<div class="fin-card fin-list">${after.map((e) => html`<div class="fv-left-row"><span class="fv-date in" title="${e.date.split('-').reverse().join('/')}"><small>daqui</small>${daysUntil(e.date)}<small>${daysUntil(e.date) === 1 ? 'dia' : 'dias'}</small></span>${dayRow(e)}</div>`)}</div>`
+          : html`<div class="fin-card fin-empty small"><p>Nada programado nas próximas semanas.</p></div>`}
+      </section>
+
+      </div>
+    </div>
+  `;
+}
+
 // Pendências de meses anteriores (abre numa janela, sem poluir o mês atual).
 const olderPending = () => [1, 2, 3].flatMap((i) => [...dayMap(addMonths(thisMonth(), -i)).values()].flat().filter((e) => !e.paid)).sort((a, b) => a.date.localeCompare(b.date));
 function olderSheet() {
@@ -519,6 +610,7 @@ function mais() {
       <label class="fin-switch-row"><span class="fin-add-ic sm purple">${icon('users')}</span><span class="fin-row-main"><span class="fin-row-title">Visão do casal</span><span class="fin-row-meta">Somar as suas finanças com as de ${partnerName()}${fin.partner.shared ? '' : ` (${partnerName()} ainda não liberou)`}</span></span><input type="checkbox" class="fin-switch" data-scope ${isCouple() ? raw('checked') : ''}></label>
     </div>` : ''}
     <div class="fin-card fin-list">
+      ${item('#/fin/mes', 'calendar', 'red', 'Visão geral do mês')}
       ${item('#/fin/contas', 'bank', 'blue', 'Contas', html`${accs.length} · ${amt(sum(accs, (b) => b.balance))}`)}
       ${item('#/fin/categorias', 'tag', 'orange', 'Categorias', String(fin.items.categories.length))}
       ${item('#/fin/metas', 'target', 'purple', 'Metas', String(fin.items.goals.length))}
@@ -543,7 +635,7 @@ function contas() {
   return html`
     ${pageHead('Contas', { back: '#/fin/mais', actions: html`<button type="button" class="fin-round" data-act="new-account" aria-label="Nova conta" title="Nova conta">${icon('plus')}</button>` })}
     <section class="fin-card fin-kpi fin-kpi-hero wide"><span class="fin-label">Saldo total</span><strong class="fin-kpi-amt big ${total < 0 ? 'neg' : ''}">${amt(total)}</strong>
-      <div class="fin-actions-row"><button type="button" class="fin-btn ghost" data-act="transfer">${icon('swap')} Transferir entre contas</button><button type="button" class="fin-btn ghost" data-act="new-account">${icon('plus')} Nova conta</button></div>
+      <div class="fin-actions-row"><button type="button" class="fin-btn ghost" data-act="adjust">${icon('edit')} Ajustar saldo</button><button type="button" class="fin-btn ghost" data-act="transfer">${icon('swap')} Transferir entre contas</button><button type="button" class="fin-btn ghost" data-act="new-account">${icon('plus')} Nova conta</button></div>
     </section>
     <div class="fin-grid accounts">${list.map((b) => html`<button type="button" class="fin-card fin-acc" ${b.owner === 'me' ? html`data-act="account" data-id="${b.account.id}"` : raw('disabled')}>
       <span class="fin-acc-top"><span class="fin-bubble" style="--c:${b.account.color || '#007AFF'}">${ico(b.account.type)}</span><span class="fin-row-main"><span class="fin-row-title">${b.account.name}${ownerTag(b.owner)}</span><span class="fin-row-meta">${type(b.account.type)}${b.account.includeInTotal === false ? ' · fora do total' : ''}</span></span></span>
@@ -598,14 +690,7 @@ function relatorios() {
   const topParties = [...parties.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
   const fixed = sum(s.entries.filter((e) => e.kind === 'expense' && (e.rec || e.recurringId)), (e) => e.amount);
   const variable = s.expense.total - fixed;
-  const proj = [];
-  let bal = totalBalance();
-  for (let i = 0; i < 6; i++) {
-    const k = addMonths(thisMonth(), i);
-    const m = monthSummary(k);
-    bal += (m.income.total - m.income.done) - (m.expense.total - m.expense.done);
-    proj.push({ key: k, bal });
-  }
+  const proj = Array.from({ length: 6 }, (_, i) => { const k = addMonths(thisMonth(), i); return { key: k, bal: forecast(k) }; });
   const maxProj = Math.max(1, ...proj.map((p) => Math.abs(p.bal)));
   return html`
     ${pageHead('Relatórios', { back: '#/fin/mais', month: true })}
@@ -654,6 +739,12 @@ function ajustes() {
         ${sw('shareWithCouple', st.shareWithCouple !== false, `Mostrar minhas finanças para ${partnerName()}`, `Na visão do casal, ${partnerName()} vê suas contas, lançamentos, cartões e metas (só para ler). Desligado, ficam só com você.`)}
       </div>
       <p class="fin-foot">${fin.partner.shared ? `${partnerName()} compartilha as finanças com você.` : `${partnerName()} não compartilha as finanças com você.`}</p></section>` : ''}
+    <section class="fin-section">${sectionHead('Previsão')}
+      <div class="fin-card fin-list">
+        <button type="button" class="fin-switch-row fin-row-btn" data-act="daily"><span class="fin-row-main"><span class="fin-row-title">Gastos do dia a dia por mês</span><span class="fin-row-meta">Mercado, comida, transporte… A previsão do fim do mês desconta o que ainda deve sair disso.</span></span><span class="fin-row-detail">${st.dailyBudget ? money(st.dailyBudget) : 'Não definido'}</span>${icon('chevron')}</button>
+        <button type="button" class="fin-switch-row fin-row-btn" data-act="adjust"><span class="fin-row-main"><span class="fin-row-title">Ajustar saldo das contas</span><span class="fin-row-meta">Quando o saldo do app não bater com o do banco.</span></span>${icon('chevron')}</button>
+      </div>
+    </section>
     <section class="fin-section">${sectionHead('Fixos')}
       <div class="fin-card fin-list">
         ${sw('autoFixed', st.autoFixed !== false, 'Fixos se confirmam sozinhos no dia', 'Salário, aluguel, contas: no dia, contam como recebidos ou pagos, sem você precisar confirmar. Se o valor for outro (luz, água) ou não acontecer, toque nele para ajustar ou pular.')}
@@ -680,6 +771,7 @@ function ajustes() {
 // ---------------------------------------------------------------------------
 export const FIN_ROUTES = {
   '': { title: 'Início', tab: '', render: home },
+  mes: { title: 'Visão geral do mês', tab: '', render: monthView },
   extrato: { title: 'Extrato', tab: 'extrato', render: extrato },
   planejar: { title: 'Planejar', tab: 'planejar', render: planejar },
   cartoes: { title: 'Cartões', tab: 'cartoes', render: cartoes },
@@ -742,6 +834,9 @@ export function mountFin(el, emitView) {
       case 'toggle-paid': togglePaid(findEntry(id, a.dataset.month)); break;
       case 'quick-pay': quickPay(findEntry(id, a.dataset.month)); break;
       case 'cal-day': ui.day = a.dataset.v; emitView(); break;
+      case 'week-day': ui.wday = a.dataset.v; emitView(); break;
+      case 'adjust': adjustBalanceForm(); break;
+      case 'daily': dailyBudgetForm(); break;
       case 'older': olderSheet(); break;
       case 'rec': {
         const src = sources().find((s) => s.owner === a.dataset.owner);

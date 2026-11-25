@@ -162,10 +162,64 @@ export async function selAction(act, visibleIds) {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Comprovantes anexados a um pagamento (casamento e finanças)
+// ---------------------------------------------------------------------------
+function attachList(list) {
+  return list.length
+    ? html`${list.map((a) => html`<div class="attach-item"><a href="/api/files/${a.id}" target="_blank" rel="noopener">${icon(IMAGE_EXT.has(a.ext) ? 'image' : 'file')}<span>${a.name}</span></a><button type="button" class="btn-icon sm" data-attach-del="${a.id}" title="Remover" aria-label="Remover comprovante">${icon('x')}</button></div>`)}`
+    : html`<small class="attach-empty">Nenhum comprovante anexado. Foto, print ou PDF.</small>`;
+}
+export const attachField = () => ({
+  type: 'html',
+  html: html`<div class="attach" data-attach-box><span class="attach-label">Comprovante</span><div class="attach-list"></div>
+    <label class="btn btn-ghost btn-sm attach-btn">${icon('clip')}<span>Anexar comprovante</span><input type="file" accept="image/*,application/pdf" multiple hidden data-attach-input></label></div>`,
+});
+// Liga a caixa de comprovantes de um formulário aberto. upload(file) → dados do arquivo; remove({ id }) apaga.
+// O que foi enviado nesta janela é apagado se ela fechar sem salvar; o que já existia só sai ao salvar.
+export function bindAttachments(m, { initial = [], upload, remove }) {
+  let list = [...initial];
+  const added = new Set();
+  const dropped = [];
+  let saved = false;
+  const box = m.body.querySelector('[data-attach-box]');
+  const listEl = box.querySelector('.attach-list');
+  const paint = () => { listEl.innerHTML = String(attachList(list)); };
+  paint();
+  box.querySelector('[data-attach-input]').onchange = async (e) => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    const btn = box.querySelector('.attach-btn');
+    btn.classList.add('loading');
+    for (const f of files) {
+      const meta = await run(() => upload(f));
+      if (meta) { list.push({ id: meta.id, name: meta.name, ext: meta.ext, size: meta.size }); added.add(meta.id); paint(); }
+    }
+    btn.classList.remove('loading');
+  };
+  listEl.onclick = async (e) => {
+    const b = e.target.closest('[data-attach-del]');
+    if (!b) return;
+    const a = list.find((x) => x.id === b.dataset.attachDel);
+    if (!a || !(await confirmDialog(`Remover o comprovante "${a.name}"?`, { ok: 'Remover' }))) return;
+    if (added.has(a.id)) { await run(() => remove(a)); added.delete(a.id); } else dropped.push(a);
+    list = list.filter((x) => x.id !== a.id);
+    paint();
+  };
+  return {
+    get: () => list,
+    async saved() { saved = true; for (const a of dropped) await remove(a).catch(() => {}); },
+    discard() { if (!saved) for (const id of added) remove({ id }).catch(() => {}); },
+  };
+}
+
 export function paymentForm(p = {}, { vendorId } = {}) {
   const vendors = [...state.items.vendors].sort((a, b) => a.name.localeCompare(b.name));
   const vendor = byId('vendors', p.vendorId || vendorId);
-  formModal({
+  // Comprovantes que ainda existem nos Documentos (podem ter sido excluídos por lá).
+  const initial = (p.attachments || []).filter((a) => state.files.some((f) => f.id === a.id));
+  let attach = null;
+  const m = formModal({
     title: p.id ? 'Editar pagamento' : 'Novo pagamento',
     values: { vendorId: vendorId || '', dueDate: todayISO(), ...p, ...payerValues(p.split) },
     fields: [
@@ -177,17 +231,27 @@ export function paymentForm(p = {}, { vendorId } = {}) {
       { name: 'paidDate', label: 'Data do pagamento', type: 'date' },
       { name: 'paid', label: 'Já foi pago', type: 'checkbox', full: true },
       ...payerFields(vendor),
+      attachField(),
       { name: 'notes', label: 'Observações', type: 'textarea', full: true, rows: 2 },
     ],
+    onClose: () => attach?.discard(),
     onSubmit: async (d) => {
+      d.attachments = attach.get();
       d.split = payerSplit(d);
       delete d.payer; delete d.payP1; delete d.payP2; delete d.payOthers;
       if (d.paid && !d.paidDate) d.paidDate = todayISO();
       if (!d.paid) d.paidDate = d.paidDate || '';
       if (p.id) await update('payments', p.id, d); else await create('payments', d);
+      await attach.saved();
       toast('Pagamento salvo');
     },
     onDelete: p.id ? async () => { await remove('payments', p.id); toast('Pagamento excluído'); } : null,
+    deleteConfirm: p.attachments?.length ? 'Excluir este pagamento? Os comprovantes continuam em Documentos.' : undefined,
+  });
+  attach = bindAttachments(m, {
+    initial,
+    upload: (f) => uploadFile(f, { category: 'comprovante', vendorId: m.body.querySelector('[name=vendorId]')?.value || '', note: m.body.querySelector('[name=description]')?.value || '' }),
+    remove: (a) => deleteFile(a.id),
   });
 }
 

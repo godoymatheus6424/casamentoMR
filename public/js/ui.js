@@ -356,9 +356,9 @@ function collect(form, fields) {
   return out;
 }
 
-export function formModal({ title, fields, values = {}, submitLabel = 'Salvar', onSubmit, onDelete, deleteConfirm, size = '', intro }) {
+export function formModal({ title, fields, values = {}, submitLabel = 'Salvar', onSubmit, onDelete, deleteConfirm, size = '', intro, onClose }) {
   return openModal({
-    title, size,
+    title, size, onClose,
     body: html`${intro ? html`<p class="form-intro">${intro}</p>` : ''}<form class="form-grid" novalidate>${fields.map((f) => (f.type === 'html' ? html`<div class="field full">${f.html}</div>` : fieldHtml(f, values[f.name])))}<p class="form-error full" role="alert"></p><button type="submit" hidden></button></form>`,
     footer: html`${onDelete ? html`<button type="button" class="btn btn-danger-ghost" data-del>${icon('trash')}<span>Excluir</span></button>` : ''}<span class="spacer"></span><button type="button" class="btn btn-ghost" data-cancel>Cancelar</button><button type="button" class="btn btn-primary" data-save>${submitLabel}</button>`,
     onMount(m) {

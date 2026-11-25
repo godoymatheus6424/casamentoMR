@@ -163,7 +163,7 @@ export function openVendor(id) {
                 ? html`<input type="checkbox" class="tick sel" data-act="sel-toggle" data-id="${p.id}" ${picked ? 'checked' : ''} aria-label="Selecionar">`
                 : html`<input type="checkbox" class="tick" data-act="paytoggle" data-id="${p.id}" ${p.paid ? 'checked' : ''} aria-label="Pago">`}
               <div class="row-main"><div class="row-title">${p.description}</div>
-                <div class="row-meta">${p.dueDate ? html`<span class="${late ? 'text-danger' : ''}">${icon('calendar')} ${fmtDate(p.dueDate)}</span>` : ''}${p.method ? html`<span>${p.method}</span>` : ''}${p.split ? html`<span class="split-tag">${icon('users')} ${paymentSplitTag(p)}</span>` : ''}${p.paid ? html`<span class="text-ok">pago${p.paidDate ? ` em ${fmtDate(p.paidDate)}` : ''}</span>` : late ? html`<span class="text-danger">vencido</span>` : ''}</div>
+                <div class="row-meta">${p.dueDate ? html`<span class="${late ? 'text-danger' : ''}">${icon('calendar')} ${fmtDate(p.dueDate)}</span>` : ''}${p.method ? html`<span>${p.method}</span>` : ''}${p.split ? html`<span class="split-tag">${icon('users')} ${paymentSplitTag(p)}</span>` : ''}${p.attachments?.length ? html`<span class="split-tag" title="Tem comprovante">${icon('clip')} comprovante</span>` : ''}${p.paid ? html`<span class="text-ok">pago${p.paidDate ? ` em ${fmtDate(p.paidDate)}` : ''}</span>` : late ? html`<span class="text-danger">vencido</span>` : ''}</div>
               </div>
               <strong class="amount ${p.paid ? 'muted' : ''}">${money(p.amount)}</strong>
             </div>`;

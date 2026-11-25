@@ -41,10 +41,13 @@ No celular, use **"Adicionar à tela de início"** para abrir o site como se fos
 
 Ao entrar, os noivos caem na área de **Finanças** (visual claro, pensado para o celular). O casamento continua igual, no coração do canto superior ou em **Mais › Casamento**; do casamento, volta-se pelo item **Finanças** do menu.
 
-- **Início = o mês em foco:** saldo hoje, quanto falta pagar e receber até o fim do mês e quanto vai sobrar; um **calendário** com o previsto de cada dia (tocar no dia mostra o que cai nele) e a lista **Ainda neste mês**, de hoje em diante. Cada mês recomeça limpo: pendências de meses anteriores viram uma linha só.
+- **Início, estilo assistente:** o dia de hoje em destaque com um resumo ("Sem gastos programados para hoje", quanto sai nos próximos 7 dias, contas atrasadas), a **linha da semana** com bolinhas nos dias com gastos (vermelho) e entradas (verde), **Depois desta semana** ("daqui X dias"), saldo de hoje e previsão para o fim do mês.
+- **Visão geral do mês:** calendário com o previsto de cada dia e a lista **Ainda neste mês**. Pendências de meses anteriores viram uma linha só.
+- **Ajustar saldo:** diga quanto tem de verdade em cada conta; a diferença entra como "Ajuste de saldo" (gastos não lançados). **Gastos do dia a dia por mês** (Ajustes): a previsão desconta o que ainda deve sair disso.
 - **Fixos se confirmam sozinhos no dia** (dá para desligar em Ajustes); tocando, ajusta o valor do mês ou pula.
 - **Contas** (banco, carteira, poupança, investimento, vale) com saldo; **transferências** entre elas.
 - **Receitas e despesas** com categoria, conta ou cartão, "de onde vem / para onde vai", situação (pago/pendente) e **parcelamento**.
+- **Comprovantes:** anexe foto, print ou PDF ao lançar. Nas finanças o comprovante é privado (só de quem lançou); nos pagamentos do casamento ele também vai para Documentos › Comprovantes.
 - **Fixos**: salário e outras rendas, aluguel, contas, assinaturas (todo mês, a cada X meses ou anual). Aparecem como previstos e são confirmados em um toque; lançar à mão com o mesmo nome também conta.
 - **Cartões** com dia de fechamento e vencimento: cada compra e parcela cai na fatura certa; limite usado; pagar a fatura debita a conta.
 - **Orçamento** (limite por categoria), **metas**, **relatórios** (12 meses, saldo previsto, categorias, fixos x variáveis, para onde vai) e **exportação em CSV**.

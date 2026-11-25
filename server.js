@@ -357,10 +357,13 @@ function getSettings(ws) {
 function coupleName(s) {
   return [s.partner1, s.partner2].map((x) => String(x || '').trim()).filter(Boolean).join(' & ') || 'Nosso casamento';
 }
+// Arquivo privado (comprovante das finanças) de outra pessoa: para quem pergunta, ele não existe.
+const notMine = (f, session) => !!f.owner_user_id && f.owner_user_id !== session.user_id;
 function fileToJson(f) {
   return {
     id: f.id, name: f.name, ext: f.ext, size: f.size, category: f.category,
     vendorId: f.vendor_id, note: f.note || '', createdAt: f.created_at, uploadedBy: f.uploaded_by,
+    ...(f.owner_user_id ? { private: true } : {}),
   };
 }
 function sanitizeFileName(name) {
@@ -378,7 +381,8 @@ function exportWorkspace(ws) {
   const items = {};
   for (const c of COLLECTIONS) items[c] = [];
   for (const r of S('SELECT * FROM items WHERE workspace_id = ? ORDER BY created_at').all(ws)) if (items[r.coll]) items[r.coll].push(rowToItem(r));
-  return { items, files: S('SELECT * FROM files WHERE workspace_id = ? ORDER BY created_at DESC').all(ws).map(fileToJson) };
+  // Comprovantes das finanças (privados de cada um) ficam fora dos Documentos do casamento.
+  return { items, files: S('SELECT * FROM files WHERE workspace_id = ? AND owner_user_id IS NULL ORDER BY created_at DESC').all(ws).map(fileToJson) };
 }
 
 // O que a assessoria recebe do casamento (ver PLANNER_FILE_CATS).
@@ -795,6 +799,9 @@ route('DELETE', '/api/me', async ({ req, res, session }) => {
   }
   const own = S("SELECT w.name FROM memberships m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ? AND m.role = 'owner' LIMIT 1").get(session.user_id);
   if (own) throw new HttpError(400, `Você criou o casamento "${own.name}". Para apagar tudo, abra esse casamento e use "Excluir conta e todos os dados" em Configurações.`);
+  // Comprovantes privados das finanças saem junto com a conta.
+  for (const f of S('SELECT id FROM files WHERE owner_user_id = ?').all(session.user_id)) fs.rmSync(path.join(UPLOAD_DIR, f.id), { force: true });
+  S('DELETE FROM files WHERE owner_user_id = ?').run(session.user_id);
   S('DELETE FROM users WHERE id = ?').run(session.user_id); // acessos, sessões e links saem em cascata
   send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
 }, { ws: false });
@@ -1124,10 +1131,13 @@ route('POST', '/api/files', async ({ req, res, session }) => {
   const used = S('SELECT COALESCE(SUM(size), 0) AS n FROM files WHERE workspace_id = ?').get(ws).n;
   const quotaMsg = `Espaço de armazenamento cheio (limite de ${QUOTA_MB >= 1024 ? `${QUOTA_MB / 1024} GB` : `${QUOTA_MB} MB`}). Exclua arquivos que não precisa mais.`;
   if (used + declared > QUOTA) throw new HttpError(413, quotaMsg);
+  // X-Private: 1 = comprovante das finanças (só de quem enviou; só os noivos têm finanças).
+  const priv = req.headers['x-private'] === '1';
+  if (priv) checkFin(session);
   const cat = String(req.headers['x-category'] || '');
-  const category = FILE_CATEGORIES.has(cat) ? cat : 'outros';
+  const category = priv ? 'comprovante' : FILE_CATEGORIES.has(cat) ? cat : 'outros';
   const vendorHeader = String(req.headers['x-vendor-id'] || '');
-  const vendorId = vendorInWorkspace(ws, vendorHeader) ? vendorHeader : null;
+  const vendorId = !priv && vendorInWorkspace(ws, vendorHeader) ? vendorHeader : null;
   let note = '';
   try { note = decodeURIComponent(String(req.headers['x-note'] || '')).slice(0, 500); } catch { /* ignora */ }
 
@@ -1150,15 +1160,15 @@ route('POST', '/api/files', async ({ req, res, session }) => {
   if (size === 0) { fs.rmSync(tmp, { force: true }); throw new HttpError(400, 'Arquivo vazio.'); }
   fs.renameSync(tmp, path.join(UPLOAD_DIR, id));
   const now = Date.now();
-  S('INSERT INTO files (id, workspace_id, name, ext, size, category, vendor_id, note, created_at, uploaded_by) VALUES (?,?,?,?,?,?,?,?,?,?)')
-    .run(id, ws, name, ext, size, category, vendorId, note, now, session.user_id);
+  S('INSERT INTO files (id, workspace_id, name, ext, size, category, vendor_id, note, created_at, uploaded_by, owner_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, ws, name, ext, size, category, vendorId, note, now, session.user_id, priv ? session.user_id : null);
   send(res, 201, fileToJson(S('SELECT * FROM files WHERE id = ?').get(id)));
 }, { write: true });
 
 route('GET', '/api/files/:id', ({ res, params, url, session }) => {
   if (!isUuid(params.id)) throw new HttpError(400, 'ID inválido.');
   const f = S('SELECT * FROM files WHERE id = ? AND workspace_id = ?').get(params.id, session.workspace_id);
-  if (!f || (session.role === 'planner' && !PLANNER_FILE_CATS.has(f.category))) throw new HttpError(404, 'Arquivo não encontrado.');
+  if (!f || (session.role === 'planner' && !PLANNER_FILE_CATS.has(f.category)) || notMine(f, session)) throw new HttpError(404, 'Arquivo não encontrado.');
   const p = path.join(UPLOAD_DIR, f.id);
   let st;
   try { st = fs.statSync(p); } catch { throw new HttpError(404, 'Arquivo não encontrado no disco.'); }
@@ -1178,7 +1188,7 @@ route('PUT', '/api/files/:id', async ({ req, res, params, session }) => {
   if (!isUuid(params.id)) throw new HttpError(400, 'ID inválido.');
   const ws = session.workspace_id;
   const f = S('SELECT * FROM files WHERE id = ? AND workspace_id = ?').get(params.id, ws);
-  if (!f) throw new HttpError(404, 'Arquivo não encontrado.');
+  if (!f || notMine(f, session)) throw new HttpError(404, 'Arquivo não encontrado.');
   const b = await readJson(req);
   let name = f.name;
   if (typeof b.name === 'string' && b.name.trim()) {
@@ -1195,6 +1205,8 @@ route('PUT', '/api/files/:id', async ({ req, res, params, session }) => {
 // Excluir arquivo é permitido mesmo em modo só leitura (libera espaço / LGPD).
 route('DELETE', '/api/files/:id', ({ res, params, session }) => {
   if (!isUuid(params.id)) throw new HttpError(400, 'ID inválido.');
+  const f = S('SELECT owner_user_id FROM files WHERE id = ? AND workspace_id = ?').get(params.id, session.workspace_id);
+  if (f && notMine(f, session)) throw new HttpError(404, 'Arquivo não encontrado.');
   const r = S('DELETE FROM files WHERE id = ? AND workspace_id = ?').run(params.id, session.workspace_id);
   if (r.changes) fs.rmSync(path.join(UPLOAD_DIR, params.id), { force: true });
   send(res, 200, { ok: true });
@@ -1262,14 +1274,14 @@ route('GET', '/api/fin', ({ res, session }) => {
   if (p) {
     const ps = finSettings(p.id);
     partner = { id: p.id, name: p.name, shared: ps.shareWithCouple !== false };
-    partner.settings = { weddingSide: ps.weddingSide || '', autoFixed: ps.autoFixed !== false };
+    partner.settings = { weddingSide: ps.weddingSide || '', autoFixed: ps.autoFixed !== false, dailyBudget: ps.shareWithCouple !== false ? Number(ps.dailyBudget) || 0 : 0 };
     if (partner.shared) { partner.items = finItems(p.id); partner.settings.weddingAccountId = ps.weddingAccountId || ''; }
   }
   const wedding = { payments: [], vendors: [] };
   for (const r of S("SELECT * FROM items WHERE workspace_id = ? AND coll IN ('payments', 'vendors')").all(ws)) {
     const it = rowToItem(r);
     if (r.coll === 'vendors') wedding.vendors.push({ id: it.id, name: it.name, category: it.category, split: it.split || null });
-    else wedding.payments.push({ id: it.id, vendorId: it.vendorId, description: it.description, amount: it.amount, dueDate: it.dueDate, paid: !!it.paid, paidDate: it.paidDate, method: it.method, split: it.split || null });
+    else wedding.payments.push({ id: it.id, vendorId: it.vendorId, description: it.description, amount: it.amount, dueDate: it.dueDate, paid: !!it.paid, paidDate: it.paidDate, method: it.method, split: it.split || null, attachments: it.attachments || [] });
   }
   send(res, 200, { settings: finSettings(session.user_id), items: finItems(session.user_id), partner, wedding });
 });

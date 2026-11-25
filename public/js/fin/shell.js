@@ -16,6 +16,7 @@ const TABS = [
 ];
 const SIDE = [
   { id: '', label: 'Início', icon: 'home' },
+  { id: 'mes', label: 'Visão geral do mês', icon: 'calendar' },
   { id: 'extrato', label: 'Extrato', icon: 'list' },
   { id: 'planejar', label: 'Fixos e orçamento', icon: 'repeat' },
   { id: 'cartoes', label: 'Cartões', icon: 'card' },

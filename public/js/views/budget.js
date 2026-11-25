@@ -158,7 +158,7 @@ function paymentsTab() {
             : html`<input type="checkbox" class="tick" data-act="paytoggle" data-id="${p.id}" ${p.paid ? 'checked' : ''} aria-label="Pago">`}
           <div class="date-chip ${late(p) ? 'late' : ''} ${p.paid ? 'done' : ''}">${p.dueDate ? fmtDateShort(p.dueDate) : '—'}</div>
           <div class="row-main"><div class="row-title">${p.description}</div>
-            <div class="row-meta">${p.vendorId ? html`<span>${vendorName(p.vendorId)}</span>` : ''}${p.method ? html`<span>${p.method}</span>` : ''}${p.split ? html`<span class="split-tag">${icon('users')} ${paymentSplitTag(p)}</span>` : ''}${p.paid ? html`<span class="text-ok">pago${p.paidDate ? ` em ${fmtDate(p.paidDate)}` : ''}</span>` : late(p) ? html`<span class="text-danger">vencido</span>` : ''}</div>
+            <div class="row-meta">${p.vendorId ? html`<span>${vendorName(p.vendorId)}</span>` : ''}${p.method ? html`<span>${p.method}</span>` : ''}${p.split ? html`<span class="split-tag">${icon('users')} ${paymentSplitTag(p)}</span>` : ''}${p.attachments?.length ? html`<span class="split-tag" title="Tem comprovante">${icon('clip')} comprovante</span>` : ''}${p.paid ? html`<span class="text-ok">pago${p.paidDate ? ` em ${fmtDate(p.paidDate)}` : ''}</span>` : late(p) ? html`<span class="text-danger">vencido</span>` : ''}</div>
           </div>
           <strong class="amount ${p.paid ? 'muted' : ''}">${money(p.amount)}</strong>
         </div>`)}</div>

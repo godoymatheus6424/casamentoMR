@@ -86,7 +86,8 @@ export async function saveSettings(patch) {
   emit();
 }
 
-export async function uploadFile(file, { category = 'outros', vendorId = '', note = '' } = {}) {
+// isPrivate: comprovante das finanças (só de quem enviou; não entra nos Documentos do casamento).
+export async function uploadFile(file, { category = 'outros', vendorId = '', note = '', isPrivate = false } = {}) {
   if (file.size > state.maxUploadMb * 1024 * 1024) throw new Error(`"${file.name}" é maior que ${state.maxUploadMb} MB.`);
   const meta = await api('POST', '/api/files', file, {
     headers: {
@@ -94,8 +95,10 @@ export async function uploadFile(file, { category = 'outros', vendorId = '', not
       'X-Category': category,
       'X-Vendor-Id': vendorId || '',
       'X-Note': encodeURIComponent(note || ''),
+      ...(isPrivate ? { 'X-Private': '1' } : {}),
     },
   });
+  if (isPrivate) return meta;
   state.files.unshift(meta);
   if (state.workspace) state.workspace.usedBytes += meta.size;
   emit();
@@ -110,6 +113,7 @@ export async function updateFile(id, patch) {
 }
 export async function deleteFile(id) {
   await api('DELETE', `/api/files/${id}`);
+  if (!state.files.some((x) => x.id === id)) return; // privado (finanças)
   const f = state.files.find((x) => x.id === id);
   if (f && state.workspace) state.workspace.usedBytes = Math.max(0, state.workspace.usedBytes - f.size);
   state.files = state.files.filter((x) => x.id !== id);

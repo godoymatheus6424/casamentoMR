@@ -1,10 +1,17 @@
 // Finanças: janelas de cadastro e edição.
-import { fin, fById, fcreate, fbulk, fupdate, fremove } from './data.js';
+import { fin, fById, fcreate, fbulk, fupdate, fremove, saveFinSettings } from './data.js';
 import {
   ACCOUNT_TYPES, COLORS, COLOR_NAMES, myCategories, knownParties, thisMonth, addMonths, monthLabel, monthOf, dayIn,
-  invoiceKey, invoiceDue, invoiceTotal, sources, partnerName, categoryOf, FREQ_LABEL,
+  invoiceKey, invoiceDue, invoiceTotal, sources, partnerName, categoryOf, FREQ_LABEL, accountBalances, ADJUST_CAT,
 } from './model.js';
 import { html, icon, formModal, openModal, toast, todayISO, shiftISO, money, fmtDate, confirmDialog, run } from '../ui.js';
+import { attachField, bindAttachments } from '../forms.js';
+import { uploadFile, deleteFile } from '../store.js';
+
+// Comprovantes das finanças: privados (só de quem lançou).
+const finUpload = (f) => uploadFile(f, { isPrivate: true });
+const finRemove = (a) => deleteFile(a.id);
+async function dropAttachments(list) { for (const t of list) for (const a of t.attachments || []) await finRemove(a).catch(() => {}); }
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
 const colorOptions = () => COLORS.map((c) => ({ value: c, label: COLOR_NAMES[c] || c }));
@@ -69,15 +76,18 @@ export function txForm(t = {}, { kind = t.kind || 'expense', card = false } = {}
     if (kind === 'expense' && isNew) fields.push({ name: 'installments', label: 'Parcelas', type: 'number', min: 1, max: 72, hint: 'Divide o valor em parcelas mensais (no cartão, uma em cada fatura).' });
     fields.push({ name: 'paid', label: kind === 'income' ? 'Já recebi' : 'Já foi pago', type: 'checkbox', hint: kind === 'expense' ? 'No cartão, conta como pago quando a fatura for paga.' : '' });
   }
+  if (kind !== 'transfer') fields.push(attachField());
   fields.push({ name: 'notes', label: 'Observações', type: 'textarea', rows: 2, full: true });
   if (group.length > 1) fields.push({ type: 'html', html: html`<p class="fin-note">${icon('repeat')} Parcela ${t.installment}/${t.installments} de uma compra de ${money(group.reduce((a, x) => a + (Number(x.amount) || 0), 0))}. A edição vale só para esta parcela. <button type="button" class="fin-link danger" data-delgroup>Excluir as ${group.length} parcelas</button></p>` });
 
+  let attach = null;
   const m = formModal({
     title: isNew ? `Nova ${KIND_TITLE[kind]}${card ? ' no cartão' : ''}` : `Editar ${KIND_TITLE[kind]}`,
     values, fields,
+    onClose: () => attach?.discard(),
     onSubmit: async (d) => {
       if (!(d.amount > 0)) throw Object.assign(new Error('Informe um valor maior que zero.'), { field: 'amount' });
-      const base = { kind, description: d.description || (kind === 'transfer' ? 'Transferência' : ''), date: d.date, categoryId: d.categoryId || '', party: d.party || '', notes: d.notes || '', paid: kind === 'transfer' ? true : !!d.paid };
+      const base = { kind, amount: d.amount, description: d.description || (kind === 'transfer' ? 'Transferência' : ''), date: d.date, categoryId: d.categoryId || '', party: d.party || '', notes: d.notes || '', paid: kind === 'transfer' ? true : !!d.paid };
       if (kind === 'transfer') {
         if (d.accountId === d.toAccountId) throw new Error('Escolha contas diferentes.');
         Object.assign(base, { accountId: d.accountId, toAccountId: d.toAccountId, cardId: '' });
@@ -86,9 +96,10 @@ export function txForm(t = {}, { kind = t.kind || 'expense', card = false } = {}
         const [type, id] = String(d.payWith || '').split(':');
         Object.assign(base, type === 'c' ? { cardId: id, accountId: '' } : { accountId: id, cardId: '' });
       }
-      if (!isNew) { await fupdate('transactions', t.id, base); toast('Lançamento salvo'); return; }
+      if (attach) base.attachments = attach.get();
+      if (!isNew) { await fupdate('transactions', t.id, base); await attach?.saved(); toast('Lançamento salvo'); return; }
       const n = Math.max(1, Math.min(72, Math.round(d.installments || 1)));
-      if (n === 1) { await fcreate('transactions', base); toast(`${kind === 'income' ? 'Receita' : kind === 'transfer' ? 'Transferência' : 'Despesa'} lançada`); return; }
+      if (n === 1) { await fcreate('transactions', base); await attach?.saved(); toast(`${kind === 'income' ? 'Receita' : kind === 'transfer' ? 'Transferência' : 'Despesa'} lançada`); return; }
       // Parcelado: uma parcela por mês, com os centavos que sobram na última.
       const totalC = Math.round(d.amount * 100), each = Math.floor(totalC / n), group = uid();
       const list = Array.from({ length: n }, (_, i) => ({
@@ -97,16 +108,19 @@ export function txForm(t = {}, { kind = t.kind || 'expense', card = false } = {}
         amount: (i === n - 1 ? totalC - each * (n - 1) : each) / 100,
         date: shiftISO(d.date, { m: i }),
         paid: base.cardId ? false : i === 0 ? base.paid : false,
+        attachments: i === 0 ? base.attachments || [] : [], // o comprovante da compra fica na 1ª parcela
       }));
       await fbulk('transactions', list);
+      await attach?.saved();
       toast(`${n} parcelas lançadas`);
     },
-    onDelete: isNew ? null : async () => { await fremove('transactions', t.id); toast('Lançamento excluído'); },
-    deleteConfirm: group.length > 1 ? 'Excluir só esta parcela?' : 'Excluir este lançamento?',
+    onDelete: isNew ? null : async () => { await fremove('transactions', t.id); await dropAttachments([t]); toast('Lançamento excluído'); },
+    deleteConfirm: group.length > 1 ? 'Excluir só esta parcela?' : `Excluir este lançamento?${t.attachments?.length ? ' O comprovante também será apagado.' : ''}`,
   });
+  if (kind !== 'transfer') attach = bindAttachments(m, { initial: t.attachments || [], upload: finUpload, remove: finRemove });
   m.body.querySelector('[data-delgroup]')?.addEventListener('click', async () => {
     if (!(await confirmDialog(`Excluir as ${group.length} parcelas desta compra?`, { ok: 'Excluir todas' }))) return;
-    await run(async () => { await fremove('transactions', group.map((x) => x.id)); m.close(); toast('Parcelas excluídas'); });
+    await run(async () => { await fremove('transactions', group.map((x) => x.id)); await dropAttachments(group); m.close(); toast('Parcelas excluídas'); });
   });
   return m;
 }
@@ -225,6 +239,52 @@ export function confirmOccurrence(e) {
 export async function markPaid(t) {
   await fupdate('transactions', t.id, { paid: true });
   toast(t.kind === 'income' ? 'Marcado como recebido' : 'Marcado como pago');
+}
+
+// ---------------------------------------------------------------------------
+// Ajustar saldo: dizer quanto tem de verdade em cada conta
+// ---------------------------------------------------------------------------
+// A diferença vira um lançamento "Ajuste de saldo" (gastos ou entradas que não foram lançados).
+export function adjustBalanceForm() {
+  if (needAccount()) return;
+  const mine = accountBalances().filter((b) => b.owner === 'me');
+  const values = Object.fromEntries(mine.map((b) => [`acc_${b.account.id}`, Math.round(b.balance * 100) / 100]));
+  formModal({
+    title: 'Ajustar saldo',
+    intro: 'Quanto tem hoje em cada conta? Confira no app do banco. A diferença entra como "Ajuste de saldo" (gastos que você não lançou), e a previsão passa a partir do valor real.',
+    values,
+    fields: mine.map((b) => ({ name: `acc_${b.account.id}`, label: `${b.account.name} · o app calculou ${money(b.balance)}`, type: 'money', full: true })),
+    submitLabel: 'Ajustar',
+    onSubmit: async (d) => {
+      const today = todayISO();
+      const list = [];
+      for (const b of mine) {
+        const real = d[`acc_${b.account.id}`];
+        if (real == null || Number.isNaN(real)) continue;
+        const diff = Math.round((real - b.balance) * 100) / 100;
+        if (Math.abs(diff) < 0.01) continue;
+        list.push({
+          kind: diff < 0 ? 'expense' : 'income', amount: Math.abs(diff), date: today, accountId: b.account.id, cardId: '',
+          categoryId: ADJUST_CAT.id, description: diff < 0 ? 'Ajuste de saldo (gastos não lançados)' : 'Ajuste de saldo (entradas não lançadas)',
+          paid: true, adjust: true,
+        });
+      }
+      if (!list.length) { toast('Os saldos já batem'); return; }
+      await fbulk('transactions', list);
+      toast(list.length === 1 ? 'Saldo ajustado' : `${list.length} saldos ajustados`);
+    },
+  });
+}
+
+// Gastos do dia a dia por mês (deixa a previsão realista).
+export function dailyBudgetForm() {
+  formModal({
+    title: 'Gastos do dia a dia',
+    intro: 'Quanto você costuma gastar por mês com o que não é fixo: mercado, comida, transporte, farmácia, lazer… A previsão do fim do mês desconta o que ainda deve sair disso. Lançando esses gastos, eles vão sendo abatidos desse valor.',
+    values: { dailyBudget: fin.settings.dailyBudget || '' },
+    fields: [{ name: 'dailyBudget', label: 'Por mês', type: 'money', full: true, hint: 'Deixe em branco para não considerar.' }],
+    onSubmit: async (d) => { await saveFinSettings({ dailyBudget: d.dailyBudget || 0 }); toast('Previsão atualizada'); },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -392,6 +452,7 @@ export function entryInfo(e) {
         ${e.split && e.split.length > 1 ? html`<dt>Valor total</dt><dd>${money(e.fullAmount)}</dd><dt>Dividido entre</dt><dd>${e.splitText} (${money(e.fullAmount / e.split.length)} cada)</dd>` : ''}
         <dt>Situação</dt><dd>${e.paid ? (e.kind === 'income' ? 'Recebido' : 'Pago') : 'Pendente'}</dd>
       </dl>
+      ${e.attachments?.length && e.owner !== 'partner' ? html`<div class="attach-list">${e.attachments.map((a) => html`<div class="attach-item"><a href="/api/files/${a.id}" target="_blank" rel="noopener">${icon('clip')}<span>${a.name}</span></a></div>`)}</div>` : ''}
       ${who ? html`<p class="fin-note">${who}${e.owner === 'wedding' ? '. Para mudar, abra o casamento › Fornecedores.' : '. Só quem lançou pode editar.'}</p>` : ''}
       ${e.owner === 'wedding' ? html`<a class="btn btn-ghost btn-block" href="#/orcamento?pagamentos">${icon('heart')}<span>Abrir no casamento</span></a>` : ''}
     </div>`,

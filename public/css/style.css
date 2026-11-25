@@ -1105,3 +1105,15 @@ a.auth-back:hover { color: var(--bx-gold); }
 .sel-bar .check span { font-weight: 500; }
 .row.picked { background: var(--accent-soft); }
 .tick.sel { accent-color: var(--accent); }
+
+/* Comprovantes anexados a pagamentos */
+.attach { display: grid; gap: 8px; }
+.attach-label { font-size: 11.5px; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2); }
+body.fin-mode .attach-label { text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--muted); }
+.attach-list { display: grid; gap: 6px; }
+.attach-item { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 6px 6px 10px; min-width: 0; }
+.attach-item a { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--accent); font-size: 14px; }
+.attach-item a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-item .ic { width: 16px; height: 16px; flex: none; }
+.attach-empty { color: var(--muted); font-size: 13px; }
+.attach-btn { justify-self: start; }

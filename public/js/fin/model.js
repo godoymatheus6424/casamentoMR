@@ -47,6 +47,8 @@ export const COLOR_NAMES = { '#007AFF': 'Azul', '#34C759': 'Verde', '#FF9500': '
 export const WEDDING_CAT = { id: '__wedding', kind: 'expense', name: 'Casamento', emoji: '💍', color: '#AF52DE', virtual: true };
 const NO_CAT = { id: '', name: 'Sem categoria', emoji: '•', color: '#8E8E93', virtual: true };
 const TRANSFER_CAT = { id: '__transfer', name: 'Transferência', emoji: '↔️', color: '#8E8E93', virtual: true };
+// Ajuste de saldo: a diferença entre o que o app calculou e o que tem de verdade na conta (gastos não lançados).
+export const ADJUST_CAT = { id: '__adjust', name: 'Ajuste de saldo', emoji: '⚖️', color: '#8E8E93', virtual: true };
 
 // ---------------------------------------------------------------------------
 // Fontes de dados conforme a visão: só as minhas, ou as minhas + as do par.
@@ -82,6 +84,7 @@ function weddingShare(p, side) {
 export function categoryOf(src, id) {
   if (id === WEDDING_CAT.id) return WEDDING_CAT;
   if (id === TRANSFER_CAT.id) return TRANSFER_CAT;
+  if (id === ADJUST_CAT.id) return ADJUST_CAT;
   return src.items.categories.find((c) => c.id === id) || NO_CAT;
 }
 export function myCategories(kind) {
@@ -174,7 +177,7 @@ function weddingEntries() {
       id: `w:${p.id}`, owner: 'wedding', src, wedding: p, kind: 'expense', readonly: true,
       description: v ? `${v.name} · ${p.description || 'pagamento'}` : (p.description || 'Pagamento do casamento'),
       amount: Math.round(full * share * 100) / 100, fullAmount: full, date, month: monthOf(date), paid: !!p.paid,
-      categoryId: WEDDING_CAT.id, party: v?.name || '', method: p.method,
+      categoryId: WEDDING_CAT.id, party: v?.name || '', method: p.method, attachments: p.attachments || [],
       accountId: fin.settings.weddingAccountId || '',
       split: people,
       shareLabel: share < 0.999 ? `${isCouple() ? 'parte do casal' : 'sua parte'} de ${money2(full)}` : people.length === 1 && !isCouple() ? 'pago só por você' : '',
@@ -385,6 +388,29 @@ export function upcoming(days = 20) {
 }
 
 // Os últimos N meses (para gráficos): receitas e despesas de cada mês.
+// ---------------------------------------------------------------------------
+// Previsão de saldo
+// ---------------------------------------------------------------------------
+// Gastos do dia a dia (mercado, comida, transporte…): valor por mês escolhido em Ajustes. A previsão desconta
+// o que ainda deve sair disso no mês (o valor menos o que já foi lançado de gastos avulsos).
+export const dailyBudget = () => sum(sources(), (s) => Number(s.settings?.dailyBudget) || 0);
+const isDayToDay = (e) => e.kind === 'expense' && !e.rec && !e.recurringId && e.owner !== 'wedding' && !e.group;
+export function dailyLeft(key) {
+  const budget = dailyBudget();
+  if (!budget || key < thisMonth()) return 0;
+  const spent = sum(monthEntries(key).filter(isDayToDay), (e) => e.amount);
+  return Math.max(0, budget - spent);
+}
+// Saldo previsto no fim de um mês: saldo de hoje + o que ainda falta entrar e sair (+ o dia a dia).
+export function forecast(key) {
+  let bal = totalBalance();
+  for (let k = thisMonth(); k <= key; k = addMonths(k, 1)) {
+    const s = monthSummary(k);
+    bal += (s.income.total - s.income.done) - (s.expense.total - s.expense.done) - dailyLeft(k);
+  }
+  return bal;
+}
+
 export function history(months = 12, end = thisMonth()) {
   const out = [];
   for (let i = months - 1; i >= 0; i--) {
