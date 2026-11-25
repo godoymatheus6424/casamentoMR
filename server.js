@@ -1262,7 +1262,7 @@ route('GET', '/api/fin', ({ res, session }) => {
   if (p) {
     const ps = finSettings(p.id);
     partner = { id: p.id, name: p.name, shared: ps.shareWithCouple !== false };
-    partner.settings = { weddingSide: ps.weddingSide || '' };
+    partner.settings = { weddingSide: ps.weddingSide || '', autoFixed: ps.autoFixed !== false };
     if (partner.shared) { partner.items = finItems(p.id); partner.settings.weddingAccountId = ps.weddingAccountId || ''; }
   }
   const wedding = { payments: [], vendors: [] };

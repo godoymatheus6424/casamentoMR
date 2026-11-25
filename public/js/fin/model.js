@@ -143,6 +143,7 @@ function recurringOccurrence(src, r, key) {
 // Movimentos de um mês (lançamentos, fixos previstos, compras por fatura e casamento)
 // ---------------------------------------------------------------------------
 function cardOf(src, id) { return id ? src.items.cards.find((c) => c.id === id) : null; }
+export const autoFixed = (src) => src.settings?.autoFixed !== false;
 function entryFromTx(src, t) {
   const card = cardOf(src, t.cardId);
   const e = { ...t, owner: src.owner, src, tx: t, amount: Number(t.amount) || 0 };
@@ -236,6 +237,8 @@ export function monthEntries(key) {
       if (done.has(r.id) || !recurringHits(r, key)) continue;
       const occ = recurringOccurrence(src, r, key);
       occ.month = key;
+      // Fixos se confirmam sozinhos no dia (dá para desligar em Ajustes); tocando, ajusta o valor ou pula o mês.
+      if (autoFixed(src) && occ.date <= todayISO()) { occ.paid = true; occ.assumed = true; }
       out.push(occ);
     }
     out.push(...cardRecurring(src, key));
@@ -303,6 +306,20 @@ export function accountBalances() {
     if (wAcc && bal.has(wAcc)) {
       const side = src.owner === 'me' ? mySide() : partnerSide();
       add(wAcc, -sum(fin.wedding.payments.filter((p) => p.paid), (p) => (Number(p.amount) || 0) * weddingShare(p, side)));
+    }
+    // Fixos confirmados sozinhos (dia já passou e ninguém lançou/pulou): entram no saldo da conta do fixo.
+    if (autoFixed(src)) {
+      const today = todayISO(), now = thisMonth(), done = new Map();
+      const fulfilled = (m) => { if (!done.has(m)) done.set(m, fulfilledRecurring(src, m)); return done.get(m); };
+      for (const r of src.items.recurring) {
+        if (r.cardId && cardOf(src, r.cardId)) continue;
+        const from = [r.start, createdMonth(r)].filter(Boolean).sort()[0] || now;
+        for (let m = from, i = 0; m <= now && i < 240; m = addMonths(m, 1), i++) {
+          if (!recurringHits(r, m) || fulfilled(m).has(r.id) || dayIn(m, r.day || 1) > today) continue;
+          const v = Number(r.amount) || 0;
+          add(r.accountId, r.kind === 'income' ? v : -v);
+        }
+      }
     }
     for (const a of src.items.accounts) out.push({ account: a, owner: src.owner, balance: bal.get(a.id) });
   }

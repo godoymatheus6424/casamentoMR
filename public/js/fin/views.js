@@ -3,8 +3,8 @@
 import { fin, setScope, toggleHidden, valuesHidden, saveFinSettings, fupdate } from './data.js';
 import {
   thisMonth, addMonths, monthLabel, monthOf, monthSummary, monthEntries, accountBalances, totalBalance, upcoming, history,
-  recurringTotals, categoryOf, myCategories, sources, isCouple, partnerName, firstName, FREQ_LABEL, ACCOUNT_TYPES, mySide,
-  invoiceDue, invoiceClosing, invoiceEntries, invoiceTotal, currentInvoiceKey, cardUsed, recurringHits, fulfilledRecurring, WEDDING_CAT,
+  recurringTotals, categoryOf, myCategories, sources, isCouple, partnerName, firstName, FREQ_LABEL, ACCOUNT_TYPES, mySide, autoFixed,
+  invoiceDue, invoiceClosing, dayIn, invoiceEntries, invoiceTotal, currentInvoiceKey, cardUsed, recurringHits, fulfilledRecurring, WEDDING_CAT,
 } from './model.js';
 import {
   txForm, recurringForm, confirmOccurrence, markPaid, accountForm, cardForm, payInvoiceForm, reopenInvoice, categoryForm,
@@ -12,9 +12,9 @@ import {
 } from './forms.js';
 import { state } from '../store.js';
 import { names } from '../domain.js';
-import { html, icon, raw, money, fmtDate, todayISO, sum, norm, run, downloadCSV, csvMoney, toast } from '../ui.js';
+import { html, icon, raw, money, fmtDate, todayISO, sum, norm, run, downloadCSV, csvMoney, toast, openModal } from '../ui.js';
 
-export const ui = { month: thisMonth(), ext: 'tudo', q: '', plan: 'fixos', catKind: 'expense', cardKey: '', cardId: '' };
+export const ui = { month: thisMonth(), day: '', ext: 'tudo', q: '', plan: 'fixos', catKind: 'expense', cardKey: '', cardId: '' };
 
 // ---------------------------------------------------------------------------
 // Peças
@@ -68,7 +68,7 @@ function statusOf(e) {
   const late = !e.paid && !e.card && e.date < todayISO();
   if (e.kind === 'transfer') return { label: 'transferência', cls: 'gray' };
   if (e.card) return { label: e.paid ? 'fatura paga' : 'na fatura', cls: e.paid ? 'green' : 'gray' };
-  if (e.paid) return { label: e.kind === 'income' ? 'recebido' : 'pago', cls: 'green' };
+  if (e.paid) return { label: `${e.kind === 'income' ? 'recebido' : 'pago'}${e.assumed ? ' · auto' : ''}`, cls: 'green' };
   if (e.virtual) return { label: late ? 'atrasado' : 'previsto', cls: late ? 'red' : 'gray' };
   return { label: late ? 'atrasado' : 'pendente', cls: late ? 'red' : 'orange' };
 }
@@ -143,128 +143,152 @@ function forecast(key) {
 }
 
 // ---------------------------------------------------------------------------
-// Início (painel)
+// Início: o mês em foco (o que falta, calendário e o que ainda vem)
 // ---------------------------------------------------------------------------
+const compact = (v) => {
+  const n = Math.abs(Number(v) || 0);
+  if (n >= 1000) return `${(n / 1000).toLocaleString('pt-BR', { maximumFractionDigits: n >= 10000 ? 0 : 1 })}k`;
+  return Math.round(n).toLocaleString('pt-BR');
+};
+// O que acontece em cada dia do mês: lançamentos e fixos (sem as compras do cartão, que entram como a fatura no vencimento).
+function dayMap(key) {
+  const map = new Map();
+  const push = (e) => { if (!map.has(e.date)) map.set(e.date, []); map.get(e.date).push(e); };
+  for (const e of monthEntries(key)) if (!e.card && e.kind !== 'transfer' && e.month === key && monthOf(e.date) === key) push(e);
+  for (const src of sources()) {
+    for (const card of src.items.cards) {
+      const total = invoiceTotal(src, card, key);
+      if (total <= 0) continue;
+      push({ id: `inv:${card.id}:${key}`, invoiceOf: card, invoice: key, owner: src.owner, src, kind: 'expense', description: `Fatura ${card.name}`, amount: total, date: invoiceDue(card, key), paid: !!card.paidInvoices?.[key] });
+    }
+  }
+  return map;
+}
+function dayRow(e) {
+  const c = e.invoiceOf ? { emoji: '💳', color: e.invoiceOf.color || '#1C1C1E', name: 'Fatura' } : categoryOf(e.src, e.categoryId);
+  const st = e.invoiceOf ? (e.paid ? { label: 'paga', cls: 'green' } : { label: 'fatura', cls: 'gray' }) : statusOf(e);
+  const mine = e.owner === 'me' && !e.readonly;
+  const month = e.invoice || e.month || monthOf(e.date);
+  const late = !e.paid && e.date < todayISO();
+  return html`<div class="fin-row" role="button" tabindex="0" data-act="entry" data-id="${e.id}" data-month="${month}">
+    ${bubble(c)}
+    <span class="fin-row-main"><span class="fin-row-title">${e.description || c.name}${ownerTag(e.owner)}</span><span class="fin-row-meta ${late ? 'red' : ''}">${[c.name, e.party, e.shareLabel].filter(Boolean).join(' · ')}</span></span>
+    <span class="fin-row-end"><span class="fin-row-amt ${e.kind}">${amt(e.amount, { sign: true, kind: e.kind })}</span>
+      ${!e.paid && mine ? html`<button type="button" class="fin-chip-btn" data-act="quick-pay" data-id="${e.id}" data-month="${month}">${e.kind === 'income' ? 'Recebi' : 'Paguei'}</button>` : html`<span class="fin-pill ${st.cls}">${st.label}</span>`}</span>
+  </div>`;
+}
+function calendar(key, map) {
+  const [y, m] = key.split('-').map(Number);
+  const first = new Date(y, m - 1, 1).getDay(); // 0 = domingo
+  const days = new Date(y, m, 0).getDate();
+  const today = todayISO();
+  const cells = [];
+  for (let i = 0; i < first; i++) cells.push(html`<span class="fin-cal-cell empty"></span>`);
+  for (let d = 1; d <= days; d++) {
+    const iso = `${key}-${String(d).padStart(2, '0')}`;
+    const items = map.get(iso) || [];
+    const out = sum(items.filter((e) => e.kind === 'expense'), (e) => e.amount);
+    const inc = sum(items.filter((e) => e.kind === 'income'), (e) => e.amount);
+    const pending = items.some((e) => !e.paid);
+    const cls = [iso === today && 'today', iso < today && 'past', iso === ui.day && 'sel', items.length && 'has', pending && iso < today && 'late'].filter(Boolean).join(' ');
+    cells.push(html`<button type="button" class="fin-cal-cell ${cls}" data-act="cal-day" data-v="${iso}" aria-label="${d}: ${items.length ? `${items.length} lançamento(s)` : 'nada'}">
+      <span class="fin-cal-d">${d}</span>
+      ${inc ? html`<span class="fin-cal-in amt">+${compact(inc)}</span>` : ''}
+      ${out ? html`<span class="fin-cal-out amt">−${compact(out)}</span>` : ''}
+      <span class="fin-cal-names d-only">${items.slice(0, 2).map((e) => html`<i class="${e.kind}">${e.description}</i>`)}${items.length > 2 ? html`<i class="more">+${items.length - 2}</i>` : ''}</span>
+    </button>`);
+  }
+  return html`<div class="fin-cal">
+    <div class="fin-cal-week">${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'].map((w) => html`<span>${w}</span>`)}</div>
+    <div class="fin-cal-grid">${cells}</div>
+  </div>`;
+}
+
 function home() {
   const key = ui.month;
   const now = thisMonth();
+  const today = todayISO();
+  const isNow = key === now;
   const s = monthSummary(key);
   const name = firstName(state.user?.name);
   const hour = new Date().getHours();
   const hello = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
-  const bal = totalBalance();
-  const cats = s.categories.filter((g) => g.total > 0);
-  const topCats = cats.slice(0, 7);
-  const next = upcoming(30).slice(0, 8);
-  const recT = recurringTotals();
-  const cards = sources().flatMap((src) => src.items.cards.map((card) => ({ src, card })));
-  const goals = sources().flatMap((src) => src.items.goals.map((g) => ({ src, g })));
+  const map = dayMap(key);
+  const all = [...map.values()].flat();
+  // Dia escolhido: hoje (no mês atual) ou o primeiro dia com movimento.
+  if (!ui.day || monthOf(ui.day) !== key) ui.day = isNow ? today : ([...map.keys()].sort()[0] || `${key}-01`);
+  const dayItems = (map.get(ui.day) || []).sort((a, b) => (a.kind === 'income' ? -1 : 1) - (b.kind === 'income' ? -1 : 1));
+  // "Ainda neste mês": só o que falta, de hoje em diante (e o que atrasou neste mês).
+  const left = all.filter((e) => !e.paid && (key > now || e.date >= today || (isNow && e.date < today))).sort((a, b) => a.date.localeCompare(b.date));
+  const toPay = sum(left.filter((e) => e.kind === 'expense'), (e) => e.amount);
+  const toGet = sum(left.filter((e) => e.kind === 'income'), (e) => e.amount);
+  // Pendências de meses anteriores: uma linha só (o mês recomeça limpo).
+  const older = isNow ? olderPending() : [];
   const over = s.categories.filter((g) => g.budget > 0 && g.total > g.budget);
-  const flow = history(6, key > now ? key : now);
-  const committed = s.income.total > 0 ? s.expense.total / s.income.total : 0;
-  const recent = monthEntries(key).filter((e) => !e.virtual).slice(-6).reverse();
+  const bal = totalBalance();
+  const dayLabel = (() => { const t = new Date(`${ui.day}T12:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }); return t.charAt(0).toUpperCase() + t.slice(1); })();
 
   return html`
     ${pageHead(isCouple() ? 'Finanças do casal' : 'Finanças', { sub: `${hello}${name ? `, ${name}` : ''}`, month: true, actions: html`<a class="fin-round m-only" href="#/inicio" title="Casamento" aria-label="Abrir o casamento">${icon('heart')}</a>` })}
-    <div class="fin-home">
-      <section class="h-kpis">
-        <a class="fin-card fin-kpi fin-kpi-hero" href="#/fin/contas">
-          <span class="fin-label">Saldo em contas ${icon('chevron')}</span>
-          <strong class="fin-kpi-amt ${bal < 0 ? 'neg' : ''}">${amt(bal)}</strong>
-          <small>${key >= now ? html`Previsto no fim de ${monthLabel(key).replace(/ de \d+$/, '').toLowerCase()}: <b>${amt(forecast(key))}</b>` : html`Resultado do mês: <b class="${s.balance < 0 ? 'neg' : 'pos'}">${amt(s.balance, { sign: true })}</b>`}</small>
-        </a>
-        <a class="fin-card fin-kpi" href="#/fin/extrato" data-act="ext-filter" data-v="receitas">
-          <span class="fin-kpi-ic green">${icon('up')}</span>
-          <span class="fin-label">Receitas</span>
-          <strong class="fin-kpi-amt">${amt(s.income.total)}</strong>
-          <small>${s.income.total - s.income.done > 0.005 ? html`${amt(s.income.done)} recebido · falta ${amt(s.income.total - s.income.done)}` : 'tudo recebido'}</small>
-        </a>
-        <a class="fin-card fin-kpi" href="#/fin/extrato" data-act="ext-filter" data-v="despesas">
-          <span class="fin-kpi-ic red">${icon('down')}</span>
-          <span class="fin-label">Despesas</span>
-          <strong class="fin-kpi-amt">${amt(s.expense.total)}</strong>
-          <small>${s.expense.total - s.expense.done > 0.005 ? html`${amt(s.expense.done)} pago · falta ${amt(s.expense.total - s.expense.done)}` : 'tudo pago'}</small>
-        </a>
-        <div class="fin-card fin-kpi">
-          <span class="fin-kpi-ic ${s.balance < 0 ? 'red' : 'blue'}">${icon('wallet')}</span>
-          <span class="fin-label">${s.balance >= 0 ? 'Sobra no mês' : 'Falta no mês'}</span>
-          <strong class="fin-kpi-amt ${s.balance < 0 ? 'neg' : 'pos'}">${amt(s.balance, { sign: true })}</strong>
-          ${s.income.total > 0 ? html`${meter(committed, committed > 1 ? 'var(--f-red)' : committed > 0.85 ? 'var(--f-orange)' : 'var(--f-green)')}<small>${Math.round(committed * 100)}% da renda comprometida</small>` : html`<small>Cadastre suas receitas</small>`}
-        </div>
+    <div class="fin-month-view">
+      <section class="fv-kpis">
+        ${key < now ? html`
+          <div class="fin-card fin-kpi"><span class="fin-label">Entrou</span><strong class="fin-kpi-amt pos">${amt(s.income.total)}</strong></div>
+          <div class="fin-card fin-kpi"><span class="fin-label">Saiu</span><strong class="fin-kpi-amt">${amt(s.expense.total)}</strong></div>
+          <div class="fin-card fin-kpi"><span class="fin-label">${s.balance >= 0 ? 'Sobrou' : 'Faltou'}</span><strong class="fin-kpi-amt ${s.balance < 0 ? 'neg' : 'pos'}">${amt(s.balance, { sign: true })}</strong></div>`
+        : html`
+          <a class="fin-card fin-kpi" href="#/fin/contas"><span class="fin-label">Saldo hoje ${icon('chevron')}</span><strong class="fin-kpi-amt ${bal < 0 ? 'neg' : ''}">${amt(bal)}</strong><small>somando suas contas</small></a>
+          <div class="fin-card fin-kpi"><span class="fin-label">${isNow ? 'Falta pagar até o fim do mês' : `A pagar em ${monthLabel(key).replace(/ de \d+$/, '').toLowerCase()}`}</span>
+            <strong class="fin-kpi-amt">${amt(toPay)}</strong>
+            <small>${toGet > 0 ? html`e <b class="pos">${amt(toGet)}</b> a receber` : 'nada a receber'}</small></div>
+          <div class="fin-card fin-kpi fin-kpi-hero"><span class="fin-label">Vai sobrar no fim do mês</span><strong class="fin-kpi-amt ${forecast(key) < 0 ? 'neg' : 'pos'}">${amt(forecast(key))}</strong><small>saldo previsto em ${dayIn(key, 31).split('-').reverse().slice(0, 2).join('/')}</small></div>`}
       </section>
 
-      ${over.length ? html`<div class="fin-card fin-notice warn h-full">${icon('alert')}<span>Passou do limite em <b>${over.map((g) => g.cat.name).join(', ')}</b>. <a href="#/fin/planejar" data-act="seg-plan" data-v="orcamento">Ver orçamento</a></span></div>` : ''}
+      ${older.length ? html`<button type="button" class="fin-card fin-notice fv-older" data-act="older">${icon('alert')}<span><b>${older.length} ${older.length === 1 ? 'pendência' : 'pendências'} de meses anteriores</b> (${amt(sum(older, (e) => e.amount))}). Toque para resolver ou marcar como pago.</span>${icon('chevron')}</button>` : ''}
+      ${over.length ? html`<a class="fin-card fin-notice warn" href="#/fin/planejar" data-act="seg-plan" data-v="orcamento">${icon('alert')}<span>Passou do limite em <b>${over.map((g) => g.cat.name).join(', ')}</b>.</span></a>` : ''}
 
-      <div class="h-left">
-      <section class="h-flow">
-        ${sectionHead('Entradas e saídas', html`<a href="#/fin/relatorios">Relatórios</a>`)}
-        <div class="fin-card">${bars(flow, { height: 150 })}${legend([['inc', 'Receitas'], ['exp', 'Despesas']])}</div>
+      <section class="fv-cal">
+        <div class="fin-card">${calendar(key, map)}</div>
       </section>
-      <section class="h-cats">
-        ${sectionHead('Gastos por categoria', html`<a href="#/fin/planejar" data-act="seg-plan" data-v="orcamento">Orçamento</a>`)}
-        ${topCats.length ? html`<div class="fin-card fin-cats">
-          ${donut(topCats.map((g) => ({ value: g.total, color: g.cat.color })), { center: html`<small>Gastos</small><strong>${amt(s.expense.total)}</strong>` })}
-          <div class="fin-cat-list">${topCats.map((g) => html`<div class="fin-cat-item">
-            ${bubble(g.cat, 'sm')}
-            <span class="fin-cat-name">${g.cat.name}${g.budget ? html`<small class="${g.total > g.budget ? 'red' : ''}">${Math.round((g.total / g.budget) * 100)}% do limite</small>` : ''}</span>
-            <span class="fin-cat-val">${amt(g.total)}<small>${s.expense.total ? Math.round((g.total / s.expense.total) * 100) : 0}%</small></span>
-          </div>`)}</div>
-        </div>` : emptyCard('pie', 'Nenhum gasto neste mês', 'Use o botão + para lançar uma despesa.')}
+
+      <div class="fv-side">
+      <section class="fv-day">
+        ${sectionHead(ui.day === today ? `Hoje, ${dayLabel.toLowerCase()}` : dayLabel)}
+        ${dayItems.length ? html`<div class="fin-card fin-list">${dayItems.map(dayRow)}</div>` : html`<div class="fin-card fin-empty small"><p>Nada previsto neste dia.</p></div>`}
       </section>
-      <section class="h-recent">
-        ${sectionHead('Últimos lançamentos', html`<a href="#/fin/extrato" data-act="ext-filter" data-v="tudo">Extrato</a>`)}
-        ${recent.length ? html`<div class="fin-card fin-list">${recent.map((e) => entryRow(e, { showDate: true }))}</div>` : emptyCard('list', 'Nada lançado neste mês', '')}
-      </section>
-      </div>
-      <div class="h-right">
-      <section class="h-next">
-        ${sectionHead('A pagar e a receber', html`<a href="#/fin/extrato" data-act="ext-filter" data-v="pendentes">Ver todos</a>`)}
-        ${next.length ? html`<div class="fin-card fin-list">${next.map(upcomingRow)}</div>` : emptyCard('tick', 'Nada pendente', 'Nos próximos 30 dias não há contas a pagar nem a receber.')}
-      </section>
-      <section class="h-cards">
-        ${sectionHead('Cartões', html`<a href="#/fin/cartoes">Faturas</a>`)}
-        ${cards.length ? html`<div class="fin-card fin-list">${cards.map(({ src, card }) => {
-          const k = currentInvoiceKey(card);
-          const total = invoiceTotal(src, card, k);
-          const limit = Number(card.limit) || 0;
-          return html`<a class="fin-row" href="#/fin/cartoes" data-act="pick-card" data-id="${card.id}">
-            <span class="fin-bubble" style="--c:${card.color || '#1C1C1E'}">💳</span>
-            <span class="fin-row-main"><span class="fin-row-title">${card.name}${ownerTag(src.owner)}</span><span class="fin-row-meta">Vence ${shortDate(invoiceDue(card, k))}${limit ? ` · ${Math.round((cardUsed(src, card) / limit) * 100)}% do limite` : ''}</span></span>
-            <span class="fin-row-end"><span class="fin-row-amt">${amt(total)}</span>${card.paidInvoices?.[k] ? html`<span class="fin-pill green">paga</span>` : ''}</span>
-          </a>`;
-        })}</div>` : emptyCard('card', 'Sem cartões', '', html`<button type="button" class="fin-btn ghost" data-act="new-card">Cadastrar cartão</button>`)}
-      </section>
-      <section class="h-fixed">
-        ${sectionHead('Fixos por mês', html`<a href="#/fin/planejar" data-act="seg-plan" data-v="fixos">Planejar</a>`)}
-        <div class="fin-card fin-fixed">
-          <div><span class="fin-label">Renda fixa</span><strong class="pos">${amt(recT.income)}</strong></div>
-          <div><span class="fin-label">Gastos fixos</span><strong class="neg">${amt(recT.expense)}</strong></div>
-          <div><span class="fin-label">Livre</span><strong>${amt(recT.free)}</strong></div>
-        </div>
-      </section>
-      <section class="h-goals">
-        ${sectionHead('Metas', html`<a href="#/fin/metas">Ver todas</a>`)}
-        ${goals.length ? html`<div class="fin-card fin-list">${goals.slice(0, 4).map(({ src, g }) => {
-          const r = (Number(g.saved) || 0) / (Number(g.target) || 1);
-          return html`<a class="fin-row fin-goal-row" href="#/fin/metas"><span class="fin-goal-emoji">${g.emoji || '🎯'}</span><span class="fin-row-main"><span class="fin-row-title">${g.name}${ownerTag(src.owner)}</span>${meter(r, g.color || 'var(--f-green)')}</span><span class="fin-row-end"><span class="fin-row-amt">${Math.round(Math.min(1, r) * 100)}%</span></span></a>`;
-        })}</div>` : emptyCard('target', 'Sem metas', '', html`<button type="button" class="fin-btn ghost" data-act="new-goal">Criar meta</button>`)}
+
+      <section class="fv-left">
+        ${sectionHead(key < now ? 'Ficou pendente' : key > now ? 'Previsto no mês' : 'Ainda neste mês', left.length ? html`<span class="fin-muted">${left.length}</span>` : '')}
+        ${left.length ? html`<div class="fin-card fin-list">${left.map((e) => html`<div class="fv-left-row">${html`<span class="fv-date ${e.date < today ? 'late' : ''}">${e.date.slice(8)}<small>${new Date(`${e.date}T12:00`).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')}</small></span>`}${dayRow(e)}</div>`)}</div>`
+          : html`<div class="fin-card fin-empty small">${icon('tick')}<strong>${key < now ? 'Nada ficou pendente' : 'Tudo em dia'}</strong><p>${key < now ? '' : 'Não falta pagar nem receber nada neste mês.'}</p></div>`}
       </section>
       </div>
     </div>
   `;
 }
-function upcomingRow(e) {
-  const c = e.invoiceOf ? { emoji: '💳', color: e.invoiceOf.color || '#1C1C1E' } : categoryOf(e.src, e.categoryId);
-  const days = Math.round((new Date(`${e.date}T12:00`) - new Date(`${todayISO()}T12:00`)) / 86400e3);
-  const when = e.late ? `atrasado ${-days} ${-days === 1 ? 'dia' : 'dias'}` : days === 0 ? 'hoje' : days === 1 ? 'amanhã' : `em ${days} dias`;
-  const mine = e.owner === 'me' && !e.readonly;
-  const month = e.invoice || e.month || monthOf(e.date);
-  return html`<div class="fin-row" role="button" tabindex="0" data-act="entry" data-id="${e.id}" data-month="${month}">
-    ${bubble(c)}
-    <span class="fin-row-main"><span class="fin-row-title">${e.description}${ownerTag(e.owner)}</span><span class="fin-row-meta ${e.late ? 'red' : ''}">${shortDate(e.date)} · ${when}</span></span>
-    <span class="fin-row-end"><span class="fin-row-amt ${e.kind}">${amt(e.amount, { sign: true, kind: e.kind })}</span>
-      ${mine ? html`<button type="button" class="fin-chip-btn" data-act="quick-pay" data-id="${e.id}" data-month="${month}">${e.kind === 'income' ? 'Recebi' : 'Paguei'}</button>` : ''}</span>
-  </div>`;
+// Pendências de meses anteriores (abre numa janela, sem poluir o mês atual).
+const olderPending = () => [1, 2, 3].flatMap((i) => [...dayMap(addMonths(thisMonth(), -i)).values()].flat().filter((e) => !e.paid)).sort((a, b) => a.date.localeCompare(b.date));
+function olderSheet() {
+  openModal({
+    title: 'Pendências de meses anteriores',
+    live: true,
+    body: (m) => {
+      const list = olderPending();
+      if (!list.length) { setTimeout(() => m.close()); return html`<p class="form-intro">Tudo resolvido.</p>`; }
+      return html`<p class="form-intro">Marque como pago o que já foi resolvido, ou abra para ajustar ou pular. Elas não aparecem no mês atual.</p>
+        <div class="fin-list fin-older-list">${list.map((e) => html`<div class="fv-left-row"><span class="fv-date late">${e.date.slice(8)}<small>${monthLabel(monthOf(e.date), { short: true })}</small></span>${dayRow(e)}</div>`)}</div>`;
+    },
+    onMount(m) {
+      m.body.onclick = (ev) => {
+        const a = ev.target.closest('[data-act]');
+        if (!a) return;
+        const e = findEntry(a.dataset.id, a.dataset.month);
+        if (!e) return;
+        if (a.dataset.act === 'quick-pay') quickPay(e);
+        else if (a.dataset.act === 'entry') { m.close(); openEntry(e); }
+      };
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -345,8 +369,9 @@ function fixos() {
     const t2 = src.items.transactions.find((x) => x.recurringId === r.id && x.period === key);
     if (t2?.skipped) return html`<span class="fin-pill gray">pulado</span>`;
     if (t2 || fulfilledRecurring(src, key).has(r.id)) return html`<span class="fin-pill green">✓ ${r.kind === 'income' ? 'recebido' : 'pago'}</span>`;
-    const late = `${key}-${String(r.day).padStart(2, '0')}` < todayISO();
-    return html`<span class="fin-pill ${late ? 'red' : 'orange'}">${r.kind === 'income' ? 'a receber' : 'a pagar'}</span>`;
+    const due = dayIn(key, r.day || 1);
+    if (autoFixed(src) && due <= todayISO()) return html`<span class="fin-pill green">✓ ${r.kind === 'income' ? 'recebido' : 'pago'} · auto</span>`;
+    return html`<span class="fin-pill ${due < todayISO() ? 'red' : 'orange'}">${r.kind === 'income' ? 'a receber' : 'a pagar'} dia ${r.day}</span>`;
   };
   const row = ({ src, r }) => {
     const c = categoryOf(src, r.categoryId);
@@ -629,6 +654,11 @@ function ajustes() {
         ${sw('shareWithCouple', st.shareWithCouple !== false, `Mostrar minhas finanças para ${partnerName()}`, `Na visão do casal, ${partnerName()} vê suas contas, lançamentos, cartões e metas (só para ler). Desligado, ficam só com você.`)}
       </div>
       <p class="fin-foot">${fin.partner.shared ? `${partnerName()} compartilha as finanças com você.` : `${partnerName()} não compartilha as finanças com você.`}</p></section>` : ''}
+    <section class="fin-section">${sectionHead('Fixos')}
+      <div class="fin-card fin-list">
+        ${sw('autoFixed', st.autoFixed !== false, 'Fixos se confirmam sozinhos no dia', 'Salário, aluguel, contas: no dia, contam como recebidos ou pagos, sem você precisar confirmar. Se o valor for outro (luz, água) ou não acontecer, toque nele para ajustar ou pular.')}
+      </div>
+    </section>
     <section class="fin-section">${sectionHead('Casamento')}
       <div class="fin-card fin-list">
         <label class="fin-switch-row"><span class="fin-row-main"><span class="fin-row-title">Você no casamento</span><span class="fin-row-meta">Cada fornecedor diz quem paga (Fornecedor › Editar › Quem paga). Aqui entra só a sua parte.</span></span>
@@ -679,6 +709,12 @@ function openEntry(e) {
   if (e.virtual) { if (e.auto || e.card) recurringForm(e.rec); else confirmOccurrence(e); return; }
   txForm(e.tx);
 }
+function quickPay(e) {
+  if (!e) return;
+  if (e.invoiceOf) payInvoiceForm(e.invoiceOf, e.invoice);
+  else if (e.virtual) confirmOccurrence(e);
+  else if (e.tx) run(() => markPaid(e.tx));
+}
 // Pagar/receber com um toque (ou desfazer).
 function togglePaid(e) {
   if (!e || !canToggle(e)) return;
@@ -696,22 +732,17 @@ export function mountFin(el, emitView) {
     switch (act) {
       case 'hide': toggleHidden(); break;
       case 'scope': setScope(a.dataset.v); break;
-      case 'month': ui.month = addMonths(ui.month, Number(a.dataset.d)); emitView(); break;
-      case 'month-today': ui.month = thisMonth(); emitView(); break;
-      case 'goto-month': ui.month = a.dataset.v; emitView(); break;
+      case 'month': ui.month = addMonths(ui.month, Number(a.dataset.d)); ui.day = ''; emitView(); break;
+      case 'month-today': ui.month = thisMonth(); ui.day = ''; emitView(); break;
+      case 'goto-month': ui.month = a.dataset.v; ui.day = ''; emitView(); break;
       case 'seg': if (a.dataset.group === 'plan') ui.plan = a.dataset.v; else if (a.dataset.group === 'cat') ui.catKind = a.dataset.v; emitView(); break;
       case 'seg-plan': ui.plan = a.dataset.v; break; // o link segue para #/fin/planejar
       case 'ext-filter': ui.ext = a.dataset.v; if (location.hash.startsWith('#/fin/extrato')) emitView(); break;
       case 'entry': openEntry(findEntry(id, a.dataset.month)); break;
       case 'toggle-paid': togglePaid(findEntry(id, a.dataset.month)); break;
-      case 'quick-pay': {
-        const e = findEntry(id, a.dataset.month);
-        if (!e) break;
-        if (e.invoiceOf) payInvoiceForm(e.invoiceOf, e.invoice);
-        else if (e.virtual) confirmOccurrence(e);
-        else if (e.tx) run(() => markPaid(e.tx));
-        break;
-      }
+      case 'quick-pay': quickPay(findEntry(id, a.dataset.month)); break;
+      case 'cal-day': ui.day = a.dataset.v; emitView(); break;
+      case 'older': olderSheet(); break;
       case 'rec': {
         const src = sources().find((s) => s.owner === a.dataset.owner);
         const r = src?.items.recurring.find((x) => x.id === id);

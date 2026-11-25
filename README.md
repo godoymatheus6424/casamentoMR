@@ -41,6 +41,8 @@ No celular, use **"Adicionar à tela de início"** para abrir o site como se fos
 
 Ao entrar, os noivos caem na área de **Finanças** (visual claro, pensado para o celular). O casamento continua igual, no coração do canto superior ou em **Mais › Casamento**; do casamento, volta-se pelo item **Finanças** do menu.
 
+- **Início = o mês em foco:** saldo hoje, quanto falta pagar e receber até o fim do mês e quanto vai sobrar; um **calendário** com o previsto de cada dia (tocar no dia mostra o que cai nele) e a lista **Ainda neste mês**, de hoje em diante. Cada mês recomeça limpo: pendências de meses anteriores viram uma linha só.
+- **Fixos se confirmam sozinhos no dia** (dá para desligar em Ajustes); tocando, ajusta o valor do mês ou pula.
 - **Contas** (banco, carteira, poupança, investimento, vale) com saldo; **transferências** entre elas.
 - **Receitas e despesas** com categoria, conta ou cartão, "de onde vem / para onde vai", situação (pago/pendente) e **parcelamento**.
 - **Fixos**: salário e outras rendas, aluguel, contas, assinaturas (todo mês, a cada X meses ou anual). Aparecem como previstos e são confirmados em um toque; lançar à mão com o mesmo nome também conta.
