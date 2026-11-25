@@ -421,6 +421,45 @@ export function history(months = 12, end = thisMonth()) {
   return out;
 }
 
+// Parcelas em andamento: as do casamento (a sua parte, por fornecedor) e as compras parceladas.
+export function installmentPlans() {
+  const now = thisMonth();
+  const out = [];
+  const byVendor = new Map();
+  for (const e of weddingEntries()) {
+    const k = e.wedding.vendorId || `avulso:${e.id}`;
+    if (!byVendor.has(k)) byVendor.set(k, []);
+    byVendor.get(k).push(e);
+  }
+  for (const [k, list] of byVendor) {
+    const left = list.filter((e) => !e.paid).sort((a, b) => a.date.localeCompare(b.date));
+    if (!left.length) continue;
+    const vendor = fin.wedding.vendors.find((v) => v.id === k);
+    out.push({
+      key: `w:${k}`, wedding: true, title: vendor?.name || list[0].description, total: list.length, left: left.length,
+      next: left[0], nextDate: left[0].date, end: left[left.length - 1].date, perMonth: left[0].amount, leftAmount: sum(left, (e) => e.amount),
+      thisMonth: sum(list.filter((e) => e.month === now), (e) => e.amount), shareLabel: left[0].shareLabel,
+    });
+  }
+  for (const src of sources()) {
+    const groups = new Map();
+    for (const t of src.items.transactions) if (t.group && t.installments > 1 && !t.skipped) groups.set(t.group, [...(groups.get(t.group) || []), t]);
+    for (const [g, list] of groups) {
+      const entries = list.map((t) => entryFromTx(src, t)).sort((a, b) => a.date.localeCompare(b.date));
+      const left = entries.filter((e) => e.month >= now && !e.paid);
+      if (!left.length) continue;
+      // No cartão, o que importa é o vencimento da fatura (não a data da compra).
+      const due = (e) => (e.card ? invoiceDue(e.card, e.invoice) : e.date);
+      out.push({
+        key: `g:${g}`, group: g, src, owner: src.owner, title: String(list[0].description || '').replace(/\s*\(\d+\/\d+\)\s*$/, ''), total: list[0].installments, left: left.length,
+        next: left[0], nextDate: due(left[0]), end: due(left[left.length - 1]), perMonth: left[0].amount, leftAmount: sum(left, (e) => e.amount),
+        thisMonth: sum(entries.filter((e) => e.month === now), (e) => e.amount), card: entries[0].card,
+      });
+    }
+  }
+  return out.sort((a, b) => a.nextDate.localeCompare(b.nextDate));
+}
+
 // Totais dos fixos (o "custo de vida" mensal e a renda fixa).
 export function recurringTotals() {
   const month = thisMonth();
@@ -433,7 +472,9 @@ export function recurringTotals() {
       if (r.kind === 'income') income += monthly; else expense += monthly;
     }
   }
-  return { income, expense, free: income - expense };
+  // Parcelas deste mês (casamento e compras parceladas) também são gasto fixo do mês.
+  const parcels = sum(installmentPlans(), (p) => p.thisMonth);
+  return { income, expense: expense + parcels, parcels, free: income - expense - parcels };
 }
 
 // Lista de "de onde vem / para onde vai" já usados (sugestões no formulário).

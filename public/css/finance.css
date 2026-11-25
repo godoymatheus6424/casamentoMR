@@ -678,3 +678,8 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
   .fin-wday strong { font-size: 22px; }
 }
 .fin-today { order: 1; } .fin-week { order: 2; } .fv-money { order: 3; } .fv-after { order: 4; } .fin-goto { order: 5; }
+.fin-plan-bar { display: block; margin-top: 5px; max-width: 220px; }
+.fin-plan-bar .fin-meter { height: 5px; }
+.fin-row-amt small { font-size: 12px; font-weight: 500; margin-left: 2px; }
+.small-date { font-size: 12px; }
+.fin-fixed small.fin-muted { display: block; font-size: 12px; }

@@ -4,7 +4,7 @@ import { fin, setScope, toggleHidden, valuesHidden, saveFinSettings, fupdate } f
 import {
   thisMonth, addMonths, monthLabel, monthOf, monthSummary, monthEntries, accountBalances, totalBalance, upcoming, history,
   recurringTotals, categoryOf, myCategories, sources, isCouple, partnerName, firstName, FREQ_LABEL, ACCOUNT_TYPES, mySide, autoFixed,
-  invoiceDue, invoiceClosing, dayIn, forecast, dailyBudget, dailyLeft, invoiceEntries, invoiceTotal, currentInvoiceKey, cardUsed, recurringHits, fulfilledRecurring, WEDDING_CAT,
+  invoiceDue, invoiceClosing, dayIn, forecast, dailyBudget, dailyLeft, installmentPlans, invoiceEntries, invoiceTotal, currentInvoiceKey, cardUsed, recurringHits, fulfilledRecurring, WEDDING_CAT,
 } from './model.js';
 import {
   txForm, recurringForm, confirmOccurrence, markPaid, accountForm, cardForm, payInvoiceForm, reopenInvoice, categoryForm,
@@ -515,7 +515,7 @@ function fixos() {
     <section class="fin-card fin-fixed-sum">
       <div class="fin-fixed">
         <div><span class="fin-label">Renda fixa por mês</span><strong class="pos">${amt(t.income)}</strong></div>
-        <div><span class="fin-label">Gastos fixos por mês</span><strong class="neg">${amt(t.expense)}</strong></div>
+        <div><span class="fin-label">Gastos fixos neste mês</span><strong class="neg">${amt(t.expense)}</strong>${t.parcels > 0 ? html`<small class="fin-muted">inclui ${amt(t.parcels)} de parcelas</small>` : ''}</div>
         <div><span class="fin-label">Sobra para o resto</span><strong>${amt(t.free)}</strong></div>
       </div>
       ${t.income > 0 ? html`${meter(ratio, ratio > 0.7 ? 'var(--f-red)' : ratio > 0.5 ? 'var(--f-orange)' : 'var(--f-green)')}<small class="fin-muted">${Math.round(ratio * 100)}% da renda fixa já tem destino todo mês${ratio > 0.5 ? ' (o ideal é ficar abaixo de 50%)' : ''}.</small>` : ''}
@@ -528,8 +528,47 @@ function fixos() {
       ${sectionHead('Gastos fixos', html`<button type="button" class="fin-link" data-act="new-rec" data-v="expense">${icon('plus')} Adicionar</button>`)}
       ${exp.length ? html`<div class="fin-table">${head}<div class="fin-card fin-list">${exp.map(row)}</div></div>` : emptyCard('repeat', 'Gastos que se repetem', 'Aluguel, condomínio, luz, internet, academia, assinaturas… Cada mês eles aparecem como previstos.', html`<button type="button" class="fin-btn" data-act="new-rec" data-v="expense">Adicionar gasto fixo</button>`)}
     </section>
+    ${parcelsSection()}
   `;
 }
+// Parcelas em andamento: casamento (por fornecedor, a sua parte) e compras parceladas.
+function parcelsSection() {
+  const plans = installmentPlans();
+  if (!plans.length) return '';
+  const short = (iso) => new Date(`${iso}T12:00`).toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' }).replace('.', '').replace(' de ', '/');
+  const row = (pl) => {
+    const c = pl.wedding ? WEDDING_CAT : categoryOf(pl.src, pl.next.categoryId);
+    const paidN = pl.total - pl.left;
+    const meta = [
+      pl.left === 1 ? 'última parcela' : `faltam ${pl.left} de ${pl.total}`,
+      pl.left > 1 ? `até ${short(pl.end)}` : '',
+      pl.card ? `💳 ${pl.card.name}` : '',
+      pl.wedding && pl.shareLabel ? pl.shareLabel.replace(/ de R\$.*/, '') : '',
+    ].filter(Boolean).join(' · ');
+    return html`<div class="fin-row tr" role="button" tabindex="0" data-act="${pl.wedding ? 'plan-wedding' : 'entry'}" data-id="${pl.next.id}" data-month="${pl.next.month || ''}">
+      ${bubble(c)}
+      <span class="fin-row-main"><span class="fin-row-title">${pl.title}${ownerTag(pl.owner)}</span><span class="fin-row-meta">${meta}</span>
+        <span class="fin-plan-bar">${meter(paidN / pl.total, c.color || 'var(--f-blue)')}</span></span>
+      <span class="td d-only">${pl.wedding ? 'Casamento' : c.name}</span>
+      <span class="td d-only">${pl.card ? 'fatura de' : 'próxima'} ${shortDate(pl.nextDate)}</span>
+      <span class="td d-only">falta ${amt(pl.leftAmount)}</span>
+      <span class="fin-row-end"><span class="fin-row-amt expense">${amt(pl.perMonth)}<small class="fin-muted">/mês</small></span><span class="m-only fin-muted small-date">${pl.card ? 'fatura de' : 'próxima'} ${shortDate(pl.nextDate)}</span></span>
+    </div>`;
+  };
+  const wedding = plans.filter((p) => p.wedding);
+  const others = plans.filter((p) => !p.wedding);
+  const head = tableHead(['Parcelas', 'Categoria', 'Próxima', 'Falta pagar', 'Por mês']);
+  return html`
+    ${wedding.length ? html`<section class="fin-section">
+      ${sectionHead('Parcelas do casamento', html`<span class="fin-muted">falta ${amt(sum(wedding, (p) => p.leftAmount))}</span>`)}
+      <div class="fin-table">${head}<div class="fin-card fin-list">${wedding.map(row)}</div></div>
+    </section>` : ''}
+    ${others.length ? html`<section class="fin-section">
+      ${sectionHead('Compras parceladas', html`<span class="fin-muted">falta ${amt(sum(others, (p) => p.leftAmount))}</span>`)}
+      <div class="fin-table">${head}<div class="fin-card fin-list">${others.map(row)}</div></div>
+    </section>` : ''}`;
+}
+
 function orcamento() {
   const s = monthSummary(ui.month);
   const withBudget = s.categories.filter((g) => g.budget > 0);
@@ -864,6 +903,7 @@ export function mountFin(el, emitView) {
       case 'quick-pay': quickPay(findEntry(id, a.dataset.month)); break;
       case 'cal-day': ui.day = a.dataset.v; emitView(); break;
       case 'week-day': ui.wday = a.dataset.v; emitView(); break;
+      case 'plan-wedding': location.hash = '#/orcamento?pagamentos'; break;
       case 'adjust': adjustBalanceForm(); break;
       case 'daily': dailyBudgetForm(); break;
       case 'older': olderSheet(); break;
