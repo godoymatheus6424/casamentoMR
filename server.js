@@ -1260,7 +1260,7 @@ route('GET', '/api/fin', ({ res, session }) => {
   for (const r of S("SELECT * FROM items WHERE workspace_id = ? AND coll IN ('payments', 'vendors')").all(ws)) {
     const it = rowToItem(r);
     if (r.coll === 'vendors') wedding.vendors.push({ id: it.id, name: it.name, category: it.category, split: it.split || null });
-    else wedding.payments.push({ id: it.id, vendorId: it.vendorId, description: it.description, amount: it.amount, dueDate: it.dueDate, paid: !!it.paid, paidDate: it.paidDate, method: it.method });
+    else wedding.payments.push({ id: it.id, vendorId: it.vendorId, description: it.description, amount: it.amount, dueDate: it.dueDate, paid: !!it.paid, paidDate: it.paidDate, method: it.method, split: it.split || null });
   }
   send(res, 200, { settings: finSettings(session.user_id), items: finItems(session.user_id), partner, wedding });
 });

@@ -2,7 +2,7 @@
 import { state, create, update, remove, bulkCreate, saveSettings, uploadFile, updateFile, deleteFile, byId } from './store.js';
 import { api } from './api.js';
 import { html, icon, formModal, openModal, toast, todayISO, shiftISO, money, moneyInput, parseMoney, fmtSize, fmtDate, confirmDialog, selectOptions, sum, run } from './ui.js';
-import { PAYMENT_METHODS, FILE_CATEGORIES, fileCategory, IMAGE_EXT, paymentsOf, telLink, waLink, igLink, webLink } from './domain.js';
+import { PAYMENT_METHODS, FILE_CATEGORIES, fileCategory, IMAGE_EXT, paymentsOf, telLink, waLink, igLink, webLink, names, vendorSplit, splitLabel } from './domain.js';
 
 export function weddingForm() {
   formModal({
@@ -33,11 +33,52 @@ export function weddingForm() {
 // ---------------------------------------------------------------------------
 // Pagamentos / parcelas
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Quem paga um pagamento: como o fornecedor (padrão), só um dos noivos, ou outra divisão
+// ---------------------------------------------------------------------------
+function payerOptions(vendor, { custom = true } = {}) {
+  const n = names();
+  return [
+    { value: 'vendor', label: vendor ? `Como o fornecedor (${splitLabel(vendorSplit(vendor))})` : `Os dois (${n.p1} e ${n.p2})` },
+    { value: 'p1', label: `Só ${n.p1}` },
+    { value: 'p2', label: `Só ${n.p2}` },
+    ...(custom ? [{ value: 'custom', label: 'Outra divisão…' }] : []),
+  ];
+}
+function payerValues(split) {
+  if (!split) return { payer: 'vendor', payP1: true, payP2: true, payOthers: '' };
+  const others = (split.others || []).join(', ');
+  if (split.p1 !== false && split.p2 === false && !others) return { payer: 'p1', payP1: true, payP2: false, payOthers: '' };
+  if (split.p1 === false && split.p2 !== false && !others) return { payer: 'p2', payP1: false, payP2: true, payOthers: '' };
+  return { payer: 'custom', payP1: split.p1 !== false, payP2: split.p2 !== false, payOthers: others };
+}
+function payerFields(vendor) {
+  const n = names();
+  const custom = (v) => v.payer === 'custom';
+  return [
+    { name: 'payer', label: 'Quem paga', type: 'select', full: true, options: payerOptions(vendor) },
+    { name: 'payP1', label: n.p1, type: 'checkbox', showIf: custom },
+    { name: 'payP2', label: n.p2, type: 'checkbox', showIf: custom },
+    { name: 'payOthers', label: 'Também dividem', full: true, placeholder: 'Ex.: Pais da noiva (separe por vírgula)', showIf: custom },
+  ];
+}
+// Converte o que foi escolhido em split (null = segue o fornecedor).
+function payerSplit(d) {
+  const payer = d.payer || 'vendor';
+  if (payer === 'vendor') return null;
+  if (payer === 'p1') return { p1: true, p2: false, others: [] };
+  if (payer === 'p2') return { p1: false, p2: true, others: [] };
+  const others = String(d.payOthers || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 6);
+  if (!d.payP1 && !d.payP2 && !others.length) throw Object.assign(new Error('Marque pelo menos uma pessoa que paga.'), { field: 'payP1' });
+  return { p1: !!d.payP1, p2: !!d.payP2, others };
+}
+
 export function paymentForm(p = {}, { vendorId } = {}) {
   const vendors = [...state.items.vendors].sort((a, b) => a.name.localeCompare(b.name));
+  const vendor = byId('vendors', p.vendorId || vendorId);
   formModal({
     title: p.id ? 'Editar pagamento' : 'Novo pagamento',
-    values: { vendorId: vendorId || '', dueDate: todayISO(), ...p },
+    values: { vendorId: vendorId || '', dueDate: todayISO(), ...p, ...payerValues(p.split) },
     fields: [
       { name: 'description', label: 'Descrição', required: true, full: true, placeholder: 'Ex.: Sinal, Parcela 2/5…' },
       { name: 'vendorId', label: 'Fornecedor', type: 'select', full: true, options: [{ value: '', label: '— Nenhum —' }, ...vendors.map((v) => ({ value: v.id, label: v.name }))] },
@@ -46,9 +87,12 @@ export function paymentForm(p = {}, { vendorId } = {}) {
       { name: 'method', label: 'Forma de pagamento', type: 'select', options: PAYMENT_METHODS.map((m) => ({ value: m, label: m || '—' })) },
       { name: 'paidDate', label: 'Data do pagamento', type: 'date' },
       { name: 'paid', label: 'Já foi pago', type: 'checkbox', full: true },
+      ...payerFields(vendor),
       { name: 'notes', label: 'Observações', type: 'textarea', full: true, rows: 2 },
     ],
     onSubmit: async (d) => {
+      d.split = payerSplit(d);
+      delete d.payer; delete d.payP1; delete d.payP2; delete d.payOthers;
       if (d.paid && !d.paidDate) d.paidDate = todayISO();
       if (!d.paid) d.paidDate = d.paidDate || '';
       if (p.id) await update('payments', p.id, d); else await create('payments', d);
@@ -89,14 +133,16 @@ export function installmentsForm(vendor) {
   formModal({
     title: 'Gerar parcelas',
     intro,
-    values: { total: remaining || '', count: 3, day: 10, start: months[1].value, entry: '', entryDate: todayISO() },
+    values: { total: remaining || '', count: 3, day: 10, start: months[1].value, entry: '', entryDate: todayISO(), entryPayer: 'vendor', parcelPayer: 'vendor' },
     fields: [
       { name: 'total', label: 'Valor a parcelar', type: 'money', required: true, full: true, hint: price ? 'Já vem com o valor que ainda não tem parcela.' : '' },
       { name: 'count', label: 'Número de parcelas', type: 'number', min: 1, max: 60, required: true },
       { name: 'day', label: 'Dia do pagamento', type: 'number', min: 1, max: 31, required: true, hint: 'Nos meses mais curtos, cai no último dia.' },
       { name: 'start', label: 'Mês da 1ª parcela', type: 'select', options: months, full: true },
       { name: 'entry', label: 'Entrada / sinal (opcional)', type: 'money', hint: 'Sai do valor e vira um pagamento à parte.' },
-      { name: 'entryDate', label: 'Data da entrada', type: 'date' },
+      { name: 'entryDate', label: 'Data da entrada', type: 'date', showIf: (v) => parseMoney(v.entry) > 0 },
+      { name: 'entryPayer', label: 'Quem paga a entrada', type: 'select', full: true, options: payerOptions(vendor, { custom: false }), showIf: (v) => parseMoney(v.entry) > 0 },
+      { name: 'parcelPayer', label: 'Quem paga as parcelas', type: 'select', full: true, options: payerOptions(vendor, { custom: false }) },
       { name: 'method', label: 'Forma de pagamento', type: 'select', full: true, options: PAYMENT_METHODS.map((m) => ({ value: m, label: m || '—' })) },
     ],
     submitLabel: 'Gerar',
@@ -112,7 +158,9 @@ export function installmentsForm(vendor) {
       if (entryC > 0 && !d.entryDate) throw Object.assign(new Error('Informe a data da entrada.'), { field: 'entryDate' });
       const [y, m] = d.start.split('-').map(Number);
       const list = [];
-      if (entryC > 0) list.push({ vendorId: vendor.id, description: 'Entrada / sinal', amount: entryC / 100, dueDate: d.entryDate, method: d.method, paid: false });
+      const entrySplit = payerSplit({ payer: d.entryPayer });
+      const parcelSplit = payerSplit({ payer: d.parcelPayer });
+      if (entryC > 0) list.push({ vendorId: vendor.id, description: 'Entrada / sinal', amount: entryC / 100, dueDate: d.entryDate, method: d.method, paid: false, split: entrySplit });
       const rest = totalC - entryC;
       const each = Math.floor(rest / count);
       for (let i = 0; i < count; i++) {
@@ -123,6 +171,7 @@ export function installmentsForm(vendor) {
           dueDate: dayInMonth(y, m - 1 + i, day),
           method: d.method,
           paid: false,
+          split: parcelSplit,
         });
       }
       const created = await bulkCreate('payments', list);

@@ -1,6 +1,6 @@
 import { state, create, update, remove, updateMany, saveSettings, emit } from '../store.js';
 import { html, icon, pageHead, chips, empty, formModal, toast, money, moneyShort, fmtDate, fmtDateShort, todayISO, progress, badge, run, sum, confirmDialog, downloadCSV, csvMoney } from '../ui.js';
-import { budgetCats, contractedVendors, paidOf, splitTotals } from '../domain.js';
+import { budgetCats, contractedVendors, paidOf, splitTotals, paymentSplitTag } from '../domain.js';
 import { paymentForm, togglePaid, calendarDialog, isUpcoming } from '../forms.js';
 import { BUDGET_CATEGORIES } from '../seed.js';
 import { openVendor, vendorForm } from './vendors.js';
@@ -151,7 +151,7 @@ function paymentsTab() {
           <input type="checkbox" class="tick" data-act="paytoggle" data-id="${p.id}" ${p.paid ? 'checked' : ''} aria-label="Pago">
           <div class="date-chip ${late(p) ? 'late' : ''} ${p.paid ? 'done' : ''}">${p.dueDate ? fmtDateShort(p.dueDate) : '—'}</div>
           <div class="row-main"><div class="row-title">${p.description}</div>
-            <div class="row-meta">${p.vendorId ? html`<span>${vendorName(p.vendorId)}</span>` : ''}${p.method ? html`<span>${p.method}</span>` : ''}${p.paid ? html`<span class="text-ok">pago${p.paidDate ? ` em ${fmtDate(p.paidDate)}` : ''}</span>` : late(p) ? html`<span class="text-danger">vencido</span>` : ''}</div>
+            <div class="row-meta">${p.vendorId ? html`<span>${vendorName(p.vendorId)}</span>` : ''}${p.method ? html`<span>${p.method}</span>` : ''}${p.split ? html`<span class="split-tag">${icon('users')} ${paymentSplitTag(p)}</span>` : ''}${p.paid ? html`<span class="text-ok">pago${p.paidDate ? ` em ${fmtDate(p.paidDate)}` : ''}</span>` : late(p) ? html`<span class="text-danger">vencido</span>` : ''}</div>
           </div>
           <strong class="amount ${p.paid ? 'muted' : ''}">${money(p.amount)}</strong>
         </div>`)}</div>

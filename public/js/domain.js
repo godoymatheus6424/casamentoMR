@@ -88,7 +88,7 @@ export function assigneeOptions() {
 // ---------------------------------------------------------------------------
 // Quem paga cada despesa do casamento (divisão em partes iguais)
 // ---------------------------------------------------------------------------
-// split = { p1: bool, p2: bool, others: ['Pais da Ana', …] }. Sem split: os dois noivos dividem.
+// split = { p1: bool, p2: bool, others: ['Pais da noiva', …] }. Sem split: os dois noivos dividem.
 export const DEFAULT_SPLIT = { p1: true, p2: true, others: [] };
 export function splitPeople(split) {
   const s = split || DEFAULT_SPLIT;
@@ -103,7 +103,9 @@ export function splitPeople(split) {
   return out.length ? out : splitPeople(DEFAULT_SPLIT);
 }
 export const vendorSplit = (v) => splitPeople(v?.split);
-// Parte de uma pessoa ('p1', 'p2' ou 'x:nome') num fornecedor (0 se ela não divide).
+// Cada pagamento pode ter a própria divisão (ex.: a entrada paga só por um); sem ela, vale a do fornecedor.
+export const paymentSplit = (p, v) => splitPeople(p?.split || v?.split);
+// Parte de uma pessoa ('p1', 'p2' ou 'x:nome') numa divisão (0 se ela não divide).
 export function shareOf(people, key) {
   return people.some((p) => p.key === key) ? 1 / people.length : 0;
 }
@@ -111,23 +113,52 @@ export function splitLabel(people) {
   const l = people.map((p) => p.label);
   return l.length <= 1 ? (l[0] || '') : `${l.slice(0, -1).join(', ')} e ${l[l.length - 1]}`;
 }
-// Totais por pessoa: parte do que foi contratado, do que já foi pago e do que falta.
+// Texto curto para mostrar ao lado de um pagamento com divisão própria ("só Rafaela", "Rafaela e Pais da noiva").
+export function paymentSplitTag(p) {
+  if (!p?.split) return '';
+  const people = splitPeople(p.split);
+  return people.length === 1 ? `só ${people[0].label}` : splitLabel(people);
+}
+
+// Quanto cabe a cada pessoa num fornecedor: os pagamentos lançados seguem a divisão de cada um;
+// o que ainda não tem pagamento lançado segue a divisão do fornecedor.
+export function vendorAllocation(v, payments = paymentsOf(v.id)) {
+  const map = new Map();
+  const add = (people, amount, paid) => {
+    for (const p of people) {
+      const r = map.get(p.key) || { key: p.key, label: p.label, total: 0, paid: 0 };
+      r.total += amount / people.length;
+      if (paid) r.paid += amount / people.length;
+      map.set(p.key, r);
+    }
+  };
+  let scheduled = 0;
+  for (const pay of payments) {
+    const amt = Number(pay.amount) || 0;
+    scheduled += amt;
+    add(paymentSplit(pay, v), amt, !!pay.paid);
+  }
+  const rest = (Number(v.price) || 0) - scheduled;
+  if (rest > 0.004) add(vendorSplit(v), rest, false);
+  return [...map.values()];
+}
+// Totais por pessoa no casamento: parte do contratado, do que já foi pago e do que falta.
 export function splitTotals() {
   const map = new Map();
-  const add = (p, field, v) => {
-    const r = map.get(p.key) || { key: p.key, label: p.label, contracted: 0, paid: 0 };
-    r[field] += v;
-    map.set(p.key, r);
+  const merge = (r) => {
+    const t = map.get(r.key) || { key: r.key, label: r.label, contracted: 0, paid: 0 };
+    t.contracted += r.total;
+    t.paid += r.paid;
+    map.set(r.key, t);
   };
-  for (const v of contractedVendors()) {
-    const people = vendorSplit(v);
-    for (const p of people) add(p, 'contracted', (Number(v.price) || 0) / people.length);
-  }
-  for (const pay of state.items.payments) {
-    if (!pay.paid) continue;
+  for (const v of contractedVendors()) vendorAllocation(v).forEach(merge);
+  // Pagamentos de fornecedores ainda não contratados ou sem fornecedor.
+  const contracted = new Set(contractedVendors().map((v) => v.id));
+  const loose = state.items.payments.filter((p) => !contracted.has(p.vendorId));
+  for (const pay of loose) {
     const v = pay.vendorId ? state.items.vendors.find((x) => x.id === pay.vendorId) : null;
-    const people = vendorSplit(v);
-    for (const p of people) add(p, 'paid', (Number(pay.amount) || 0) / people.length);
+    const people = paymentSplit(pay, v);
+    for (const p of people) merge({ key: p.key, label: p.label, total: (Number(pay.amount) || 0) / people.length, paid: pay.paid ? (Number(pay.amount) || 0) / people.length : 0 });
   }
   return [...map.values()];
 }

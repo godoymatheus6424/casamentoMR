@@ -1093,3 +1093,9 @@ a.auth-back:hover { color: var(--bx-gold); }
   .split-tr.head span:nth-child(2) { font-size: 0; } .split-tr.head span:nth-child(2)::after { content: "Parte"; font-size: 11px; }
 }
 .field[hidden] { display: none !important; }
+.split-tag { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); }
+.split-tag .ic { width: 13px; height: 13px; }
+@media (max-width: 599px) {
+  .split-row { grid-template-columns: 1fr 1fr; row-gap: 2px; }
+  .split-row > span:first-child { grid-column: 1 / -1; white-space: normal; }
+}

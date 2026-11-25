@@ -76,7 +76,7 @@ export const partnerSide = () => {
 // Fração de um pagamento do casamento que cabe a um lado (pela divisão do fornecedor).
 function weddingShare(p, side) {
   const v = p.vendorId ? fin.wedding.vendors.find((x) => x.id === p.vendorId) : null;
-  return shareOf(splitPeople(v?.split), side);
+  return shareOf(splitPeople(p.split || v?.split), side);
 }
 
 export function categoryOf(src, id) {
@@ -163,7 +163,7 @@ function weddingEntries() {
   for (const p of fin.wedding.payments) {
     if (!p.dueDate && !p.paidDate) continue;
     const v = vendors.get(p.vendorId);
-    const people = splitPeople(v?.split);
+    const people = splitPeople(p.split || v?.split); // a divisão do pagamento vale mais que a do fornecedor
     // Só a parte de quem está nesta visão (eu, ou eu + meu par). Quem não divide, não vê.
     const share = sum([...new Set(sides)], (side) => shareOf(people, side));
     if (share <= 0) continue;
@@ -175,7 +175,8 @@ function weddingEntries() {
       amount: Math.round(full * share * 100) / 100, fullAmount: full, date, month: monthOf(date), paid: !!p.paid,
       categoryId: WEDDING_CAT.id, party: v?.name || '', method: p.method,
       accountId: fin.settings.weddingAccountId || '',
-      split: people, shareLabel: share < 0.999 ? `${isCouple() ? 'parte do casal' : 'sua parte'} de ${money2(full)}` : '',
+      split: people,
+      shareLabel: share < 0.999 ? `${isCouple() ? 'parte do casal' : 'sua parte'} de ${money2(full)}` : people.length === 1 && !isCouple() ? 'pago só por você' : '',
       splitText: splitLabel(people),
     });
   }

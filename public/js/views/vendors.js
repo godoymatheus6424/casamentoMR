@@ -1,6 +1,6 @@
 import { state, create, update, remove, byId, emit } from '../store.js';
 import { html, icon, pageHead, chips, searchBox, empty, formModal, openModal, toast, money, moneyShort, fmtDate, todayISO, progress, badge, run, norm, sum, plural, downloadCSV, csvMoney, confirmDialog } from '../ui.js';
-import { VENDOR_STATUS, vendorStatus, vendorCategoryOptions, paymentsOf, paidOf, filesOf, missingCategories, names, vendorSplit, splitLabel, DEFAULT_SPLIT } from '../domain.js';
+import { VENDOR_STATUS, vendorStatus, vendorCategoryOptions, paymentsOf, paidOf, filesOf, missingCategories, names, vendorSplit, splitLabel, DEFAULT_SPLIT, vendorAllocation, paymentSplitTag } from '../domain.js';
 import { paymentForm, installmentsForm, calendarDialog, isUpcoming, togglePaid, fileRow, fileEditForm, uploadMany, contactLinks, stars } from '../forms.js';
 
 const ui = { status: 'todos', cat: '', q: '', missingOpen: true, showSkipped: false, popCat: '' };
@@ -98,12 +98,13 @@ export function vendorForm(v = {}, { category } = {}) {
 // Quem paga este fornecedor: a parte de cada um (total, pago e quanto falta).
 function splitBox(v, price, paid) {
   const people = vendorSplit(v);
-  if (!price && !paid) return html`<p class="split-line muted small">${icon('users')} Quem paga: ${splitLabel(people)}</p>`;
-  const k = people.length;
-  if (k === 1) return html`<p class="split-line muted small">${icon('users')} Pago só por ${people[0].label}</p>`;
+  const alloc = vendorAllocation(v);
+  if (!alloc.length) return html`<p class="split-line muted small">${icon('users')} Quem paga: ${splitLabel(people)}</p>`;
+  if (alloc.length === 1) return html`<p class="split-line muted small">${icon('users')} Pago só por ${alloc[0].label}</p>`;
+  const even = alloc.every((r) => Math.abs(r.total - alloc[0].total) < 0.01);
   return html`<div class="split-box">
-    <div class="split-box-head">${icon('users')}<span>Dividido entre ${k}: <strong>${money(price / k)}</strong> para cada um</span></div>
-    <div class="split-rows">${people.map((p) => html`<div class="split-row"><span>${p.label}</span><span>pagou <b class="text-ok">${money(paid / k)}</b></span><span>falta <b>${money(Math.max(0, (price - paid) / k))}</b></span></div>`)}</div>
+    <div class="split-box-head">${icon('users')}<span>${even ? html`Dividido entre ${alloc.length}: <strong>${money(alloc[0].total)}</strong> para cada um` : html`Quem paga (pela divisão de cada pagamento)`}</span></div>
+    <div class="split-rows">${alloc.map((r) => html`<div class="split-row"><span>${r.label}${even ? '' : html` · <b>${money(r.total)}</b>`}</span><span>pagou <b class="text-ok">${money(r.paid)}</b></span><span>falta <b>${money(Math.max(0, r.total - r.paid))}</b></span></div>`)}</div>
   </div>`;
 }
 
@@ -154,7 +155,7 @@ export function openVendor(id) {
             return html`<div class="row clickable" data-act="editpay" data-id="${p.id}">
               <input type="checkbox" class="tick" data-act="paytoggle" data-id="${p.id}" ${p.paid ? 'checked' : ''} aria-label="Pago">
               <div class="row-main"><div class="row-title">${p.description}</div>
-                <div class="row-meta">${p.dueDate ? html`<span class="${late ? 'text-danger' : ''}">${icon('calendar')} ${fmtDate(p.dueDate)}</span>` : ''}${p.method ? html`<span>${p.method}</span>` : ''}${p.paid ? html`<span class="text-ok">pago${p.paidDate ? ` em ${fmtDate(p.paidDate)}` : ''}</span>` : late ? html`<span class="text-danger">vencido</span>` : ''}</div>
+                <div class="row-meta">${p.dueDate ? html`<span class="${late ? 'text-danger' : ''}">${icon('calendar')} ${fmtDate(p.dueDate)}</span>` : ''}${p.method ? html`<span>${p.method}</span>` : ''}${p.split ? html`<span class="split-tag">${icon('users')} ${paymentSplitTag(p)}</span>` : ''}${p.paid ? html`<span class="text-ok">pago${p.paidDate ? ` em ${fmtDate(p.paidDate)}` : ''}</span>` : late ? html`<span class="text-danger">vencido</span>` : ''}</div>
               </div>
               <strong class="amount ${p.paid ? 'muted' : ''}">${money(p.amount)}</strong>
             </div>`;
