@@ -385,7 +385,7 @@ function exportWorkspace(ws) {
 function plannerData(items, files, settings) {
   const out = {};
   for (const c of COLLECTIONS) out[c] = [];
-  out.vendors = items.vendors.map(({ price, ...v }) => v);
+  out.vendors = items.vendors.map(({ price, split, ...v }) => v); // sem valores nem divisão (financeiro)
   out.guests = items.guests;
   out.tables = items.tables;
   out.timeline = items.timeline;
@@ -1253,12 +1253,13 @@ route('GET', '/api/fin', ({ res, session }) => {
   if (p) {
     const ps = finSettings(p.id);
     partner = { id: p.id, name: p.name, shared: ps.shareWithCouple !== false };
-    if (partner.shared) { partner.items = finItems(p.id); partner.settings = { weddingAccountId: ps.weddingAccountId || '' }; }
+    partner.settings = { weddingSide: ps.weddingSide || '' };
+    if (partner.shared) { partner.items = finItems(p.id); partner.settings.weddingAccountId = ps.weddingAccountId || ''; }
   }
   const wedding = { payments: [], vendors: [] };
   for (const r of S("SELECT * FROM items WHERE workspace_id = ? AND coll IN ('payments', 'vendors')").all(ws)) {
     const it = rowToItem(r);
-    if (r.coll === 'vendors') wedding.vendors.push({ id: it.id, name: it.name, category: it.category });
+    if (r.coll === 'vendors') wedding.vendors.push({ id: it.id, name: it.name, category: it.category, split: it.split || null });
     else wedding.payments.push({ id: it.id, vendorId: it.vendorId, description: it.description, amount: it.amount, dueDate: it.dueDate, paid: !!it.paid, paidDate: it.paidDate, method: it.method });
   }
   send(res, 200, { settings: finSettings(session.user_id), items: finItems(session.user_id), partner, wedding });

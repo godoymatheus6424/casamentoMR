@@ -3,7 +3,7 @@
 import { fin, setScope, toggleHidden, valuesHidden, saveFinSettings, fupdate } from './data.js';
 import {
   thisMonth, addMonths, monthLabel, monthOf, monthSummary, monthEntries, accountBalances, totalBalance, upcoming, history,
-  recurringTotals, categoryOf, myCategories, sources, isCouple, partnerName, firstName, FREQ_LABEL, ACCOUNT_TYPES,
+  recurringTotals, categoryOf, myCategories, sources, isCouple, partnerName, firstName, FREQ_LABEL, ACCOUNT_TYPES, mySide,
   invoiceDue, invoiceClosing, invoiceEntries, invoiceTotal, currentInvoiceKey, cardUsed, recurringHits, fulfilledRecurring, WEDDING_CAT,
 } from './model.js';
 import {
@@ -11,6 +11,7 @@ import {
   goalForm, goalDepositForm, entryInfo,
 } from './forms.js';
 import { state } from '../store.js';
+import { names } from '../domain.js';
 import { html, icon, raw, money, fmtDate, todayISO, sum, norm, run, downloadCSV, csvMoney, toast } from '../ui.js';
 
 export const ui = { month: thisMonth(), ext: 'tudo', q: '', plan: 'fixos', catKind: 'expense', cardKey: '', cardId: '' };
@@ -78,7 +79,7 @@ function entryRow(e, { table = false, showDate = false } = {}) {
   const c = e.kind === 'transfer' ? { emoji: '↔️', color: '#8E8E93', name: 'Transferência' } : categoryOf(e.src, e.categoryId);
   const st = statusOf(e);
   const where = e.card ? `💳 ${e.card.name}` : e.kind === 'transfer' ? '' : (e.src.items.accounts.find((a) => a.id === e.accountId)?.name || (e.owner === 'wedding' ? 'Casamento' : ''));
-  const meta = [showDate && shortDate(e.date), c.name, e.card && `💳 ${e.card.name}`, e.party].filter(Boolean).join(' · ');
+  const meta = [showDate && shortDate(e.date), c.name, e.card && `💳 ${e.card.name}`, e.party, e.shareLabel].filter(Boolean).join(' · ');
   const statusEl = canToggle(e)
     ? html`<button type="button" class="fin-pill fin-pill-btn ${st.cls}" data-act="toggle-paid" data-id="${e.id}" data-month="${e.month || ''}" title="${e.paid ? 'Marcar como pendente' : e.kind === 'income' ? 'Marcar como recebido' : 'Marcar como pago'}">${e.paid ? '✓ ' : ''}${st.label}</button>`
     : html`<span class="fin-pill ${st.cls}">${st.label}</span>`;
@@ -88,7 +89,7 @@ function entryRow(e, { table = false, showDate = false } = {}) {
     <span class="fin-row-main">
       <span class="fin-row-title">${e.description || c.name}${e.recurringId || e.rec ? html`<span class="fin-mini" title="Fixo">${icon('repeat')}</span>` : ''}${ownerTag(e.owner)}</span>
       <span class="fin-row-meta ${table ? 'm-only' : ''}">${meta}</span>
-      ${table ? html`<span class="fin-row-meta d-only">${[showDate && shortDate(e.date), e.party, e.installments && `parcela ${e.installment}/${e.installments}`].filter(Boolean).join(' · ') || ' '}</span>` : ''}
+      ${table ? html`<span class="fin-row-meta d-only">${[showDate && shortDate(e.date), e.party, e.installments && `parcela ${e.installment}/${e.installments}`, e.shareLabel].filter(Boolean).join(' · ') || ' '}</span>` : ''}
     </span>
     ${table ? html`<span class="td d-only">${c.name}</span><span class="td d-only">${where}</span><span class="td d-only">${statusEl}</span>` : ''}
     <span class="fin-row-end">
@@ -630,8 +631,11 @@ function ajustes() {
       <p class="fin-foot">${fin.partner.shared ? `${partnerName()} compartilha as finanças com você.` : `${partnerName()} não compartilha as finanças com você.`}</p></section>` : ''}
     <section class="fin-section">${sectionHead('Casamento')}
       <div class="fin-card fin-list">
-        ${sw('weddingInPersonal', st.weddingInPersonal !== false, 'Pagamentos do casamento nas minhas finanças', 'As parcelas dos fornecedores entram como despesas da categoria Casamento. Na visão do casal elas sempre entram, uma vez só.')}
-        <label class="fin-switch-row"><span class="fin-row-main"><span class="fin-row-title">Conta que paga o casamento</span><span class="fin-row-meta">Os pagamentos já feitos saem do saldo desta conta. Escolha em só uma das contas do casal.</span></span>
+        <label class="fin-switch-row"><span class="fin-row-main"><span class="fin-row-title">Você no casamento</span><span class="fin-row-meta">Cada fornecedor diz quem paga (Fornecedor › Editar › Quem paga). Aqui entra só a sua parte.</span></span>
+          <select class="fin-select" data-set="weddingSide">${['p1', 'p2'].map((k) => html`<option value="${k}" ${mySide() === k ? raw('selected') : ''}>${names()[k]}</option>`)}</select>
+        </label>
+        ${sw('weddingInPersonal', st.weddingInPersonal !== false, 'Pagamentos do casamento nas minhas finanças', 'Sua parte das parcelas dos fornecedores entra como despesa da categoria Casamento. Na visão do casal entra a parte dos dois.')}
+        <label class="fin-switch-row"><span class="fin-row-main"><span class="fin-row-title">Conta que paga a sua parte</span><span class="fin-row-meta">Sua parte dos pagamentos já feitos sai do saldo desta conta.</span></span>
           <select class="fin-select" data-set="weddingAccountId"><option value="">Nenhuma</option>${fin.items.accounts.map((a) => html`<option value="${a.id}" ${a.id === st.weddingAccountId ? raw('selected') : ''}>${a.name}</option>`)}</select>
         </label>
       </div>

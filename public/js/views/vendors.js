@@ -1,6 +1,6 @@
 import { state, create, update, remove, byId, emit } from '../store.js';
 import { html, icon, pageHead, chips, searchBox, empty, formModal, openModal, toast, money, moneyShort, fmtDate, todayISO, progress, badge, run, norm, sum, plural, downloadCSV, csvMoney, confirmDialog } from '../ui.js';
-import { VENDOR_STATUS, vendorStatus, vendorCategoryOptions, paymentsOf, paidOf, filesOf, missingCategories } from '../domain.js';
+import { VENDOR_STATUS, vendorStatus, vendorCategoryOptions, paymentsOf, paidOf, filesOf, missingCategories, names, vendorSplit, splitLabel, DEFAULT_SPLIT } from '../domain.js';
 import { paymentForm, installmentsForm, calendarDialog, isUpcoming, togglePaid, fileRow, fileEditForm, uploadMany, contactLinks, stars } from '../forms.js';
 
 const ui = { status: 'todos', cat: '', q: '', missingOpen: true, showSkipped: false, popCat: '' };
@@ -52,16 +52,25 @@ function missingSection(all) {
 }
 
 export function vendorForm(v = {}, { category } = {}) {
+  const n = names();
+  const split = v.split || DEFAULT_SPLIT;
   formModal({
     title: v.id ? 'Editar fornecedor' : 'Novo fornecedor',
     size: 'lg',
-    values: { status: 'pesquisando', category: category || '', ...v, rating: v.rating ? String(v.rating) : '' },
+    values: {
+      status: 'pesquisando', category: category || '', ...v, rating: v.rating ? String(v.rating) : '',
+      splitP1: split.p1 !== false, splitP2: split.p2 !== false, splitOthers: (split.others || []).join(', '),
+    },
     fields: [
       { name: 'name', label: 'Nome do fornecedor', required: true, full: true },
       { name: 'category', label: 'Categoria', type: 'select', options: vendorCategoryOptions(v.category || category) },
       { name: 'status', label: 'Status', type: 'select', options: VENDOR_STATUS.map((s) => ({ value: s.key, label: s.label })) },
       { name: 'price', label: 'Valor (orçado ou contratado)', type: 'money' },
       { name: 'contractDate', label: 'Data do contrato', type: 'date' },
+      { type: 'html', html: html`<div class="split-head"><strong>Quem paga</strong><small>O valor é dividido em partes iguais entre quem estiver marcado.</small></div>` },
+      { name: 'splitP1', label: n.p1, type: 'checkbox' },
+      { name: 'splitP2', label: n.p2, type: 'checkbox' },
+      { name: 'splitOthers', label: 'Também dividem (opcional)', full: true, placeholder: 'Ex.: Pais da noiva. Para mais de uma pessoa, separe por vírgula' },
       { name: 'contactName', label: 'Pessoa de contato' },
       { name: 'phone', label: 'Telefone / WhatsApp', type: 'tel', placeholder: '(11) 99999-9999' },
       { name: 'email', label: 'E-mail', type: 'email' },
@@ -73,6 +82,10 @@ export function vendorForm(v = {}, { category } = {}) {
     ],
     onSubmit: async (d) => {
       d.rating = d.rating ? Number(d.rating) : null;
+      const others = String(d.splitOthers || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 6);
+      if (!d.splitP1 && !d.splitP2 && !others.length) throw Object.assign(new Error('Marque pelo menos uma pessoa em "Quem paga".'), { field: 'splitP1' });
+      d.split = { p1: !!d.splitP1, p2: !!d.splitP2, others };
+      delete d.splitP1; delete d.splitP2; delete d.splitOthers;
       const saved = v.id ? await update('vendors', v.id, d) : await create('vendors', d);
       toast('Fornecedor salvo');
       if (!v.id) setTimeout(() => openVendor(saved.id), 250);
@@ -80,6 +93,18 @@ export function vendorForm(v = {}, { category } = {}) {
     onDelete: v.id ? async () => { await remove('vendors', v.id); toast('Fornecedor excluído'); } : null,
     deleteConfirm: 'Excluir este fornecedor? As parcelas ligadas a ele também serão excluídas. Os arquivos continuam em Documentos.',
   });
+}
+
+// Quem paga este fornecedor: a parte de cada um (total, pago e quanto falta).
+function splitBox(v, price, paid) {
+  const people = vendorSplit(v);
+  if (!price && !paid) return html`<p class="split-line muted small">${icon('users')} Quem paga: ${splitLabel(people)}</p>`;
+  const k = people.length;
+  if (k === 1) return html`<p class="split-line muted small">${icon('users')} Pago só por ${people[0].label}</p>`;
+  return html`<div class="split-box">
+    <div class="split-box-head">${icon('users')}<span>Dividido entre ${k}: <strong>${money(price / k)}</strong> para cada um</span></div>
+    <div class="split-rows">${people.map((p) => html`<div class="split-row"><span>${p.label}</span><span>pagou <b class="text-ok">${money(paid / k)}</b></span><span>falta <b>${money(Math.max(0, (price - paid) / k))}</b></span></div>`)}</div>
+  </div>`;
 }
 
 export function openVendor(id) {
@@ -113,6 +138,7 @@ export function openVendor(id) {
           <div class="kpi"><small>Falta pagar</small><strong>${money(Math.max(0, price - paid))}</strong></div>
         </div>
         ${price ? progress(paid / price, 'ok') : ''}
+        ${splitBox(v, price, paid)}
         ${price && Math.abs(price - scheduled) > 0.009 && pays.length ? html`<p class="hint">${icon('alert')} As parcelas somam ${money(scheduled)} — ${scheduled < price ? `faltam ${money(price - scheduled)} sem parcela definida` : `${money(scheduled - price)} acima do valor`}.</p>` : ''}
 
         <section class="vd-section">

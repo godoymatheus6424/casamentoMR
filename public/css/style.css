@@ -1066,3 +1066,30 @@ a.auth-back:hover { color: var(--bx-gold); }
 .cal-opt p { margin: 0; }
 .cal-list { margin-bottom: 8px; }
 .cal-list .row-actions { gap: 6px; }
+
+/* Quem paga (divisão das despesas do casamento) */
+.split-head { display: grid; gap: 2px; padding-top: 6px; border-top: 1px solid var(--line); margin-top: 4px; }
+.split-head strong { font-size: 11.5px; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2); padding-top: 12px; }
+.split-head small { color: var(--muted); font-size: 12.5px; }
+.split-line { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; }
+.split-line .ic { width: 15px; height: 15px; }
+.split-box { margin-top: 12px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 8px; }
+.split-box-head { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); }
+.split-box-head .ic { width: 16px; height: 16px; color: var(--accent); }
+.split-rows { display: grid; gap: 4px; }
+.split-row { display: grid; grid-template-columns: minmax(0, 1.3fr) 1fr 1fr; gap: 10px; font-size: 13.5px; color: var(--muted); }
+.split-row > span:first-child { color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-row b { font-weight: 600; color: var(--ink); }
+.split-row b.text-ok { color: var(--ok); }
+.split-card { margin-bottom: 16px; }
+.split-card .card-head small { font-size: 12.5px; }
+.split-table { padding: 0 18px 14px; display: grid; }
+.split-tr { display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr)); gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; align-items: center; }
+.split-tr.head { border-top: 0; padding-top: 0; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.split-tr > span:not(:first-child) { text-align: right; }
+.split-tr strong { font-weight: 500; }
+@media (max-width: 599px) {
+  .split-tr { grid-template-columns: minmax(0, 1fr) repeat(3, auto); font-size: 13px; gap: 8px; }
+  .split-tr.head span:nth-child(2) { font-size: 0; } .split-tr.head span:nth-child(2)::after { content: "Parte"; font-size: 11px; }
+}
+.field[hidden] { display: none !important; }

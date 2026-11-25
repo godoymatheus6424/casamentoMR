@@ -301,7 +301,7 @@ function fieldHtml(f, v) {
       control = html`<select ${common}>${selectOptions(normOptions(f.options), v ?? f.default ?? '')}</select>`;
       break;
     case 'checkbox':
-      return html`<div class="field ${f.full ? 'full' : ''} field-check"><label class="check"><input type="checkbox" id="${id}" name="${f.name}" ${v ? raw('checked') : ''}><span>${f.label}</span></label>${f.hint ? html`<small>${f.hint}</small>` : ''}</div>`;
+      return html`<div class="field ${f.full ? 'full' : ''} field-check" data-field="${f.name}"><label class="check"><input type="checkbox" id="${id}" name="${f.name}" ${v ? raw('checked') : ''}><span>${f.label}</span></label>${f.hint ? html`<small>${f.hint}</small>` : ''}</div>`;
     case 'money':
       control = html`<div class="input-prefix"><span>R$</span><input type="text" inputmode="decimal" ${common} value="${moneyInput(v)}" autocomplete="off"></div>`;
       break;
@@ -313,15 +313,33 @@ function fieldHtml(f, v) {
       control = html`<input type="${type}" ${common} value="${v ?? f.default ?? ''}" ${list ? html`list="${list}"` : ''} ${f.autocomplete ? html`autocomplete="${f.autocomplete}"` : ''} ${type === 'text' && f.noCaps ? raw('autocapitalize="none"') : ''}>${list ? html`<datalist id="${list}">${f.list.map((x) => html`<option value="${x}"></option>`)}</datalist>` : ''}`;
     }
   }
-  return html`<div class="field ${f.full ? 'full' : ''}"><label for="${id}">${f.label}${f.required ? html`<span class="req" aria-hidden="true"> *</span>` : ''}</label>${control}${f.hint ? html`<small>${f.hint}</small>` : ''}</div>`;
+  return html`<div class="field ${f.full ? 'full' : ''}" data-field="${f.name}"><label for="${id}">${f.label}${f.required ? html`<span class="req" aria-hidden="true"> *</span>` : ''}</label>${control}${f.hint ? html`<small>${f.hint}</small>` : ''}</div>`;
 }
 
+// Campos com showIf(valores) só aparecem quando fazem sentido (ex.: "a cada quantos meses" só se a repetição
+// for "a cada X meses"). Campo escondido não é lido nem validado.
+function rawValues(form, fields) {
+  const out = {};
+  for (const f of fields) {
+    const el = f.name && form.elements[f.name];
+    if (el) out[f.name] = f.type === 'checkbox' ? el.checked : el.value;
+  }
+  return out;
+}
+function applyShowIf(form, fields) {
+  const vals = rawValues(form, fields);
+  for (const f of fields) {
+    if (!f.showIf) continue;
+    const wrap = form.querySelector(`[data-field="${f.name}"]`);
+    if (wrap) wrap.hidden = !f.showIf(vals);
+  }
+}
 function collect(form, fields) {
   const out = {};
   for (const f of fields) {
     if (f.type === 'html') continue;
     const el = form.elements[f.name];
-    if (!el) continue;
+    if (!el || form.querySelector(`[data-field="${f.name}"]`)?.hidden) continue;
     let v;
     switch (f.type) {
       case 'checkbox': v = el.checked; break;
@@ -345,6 +363,11 @@ export function formModal({ title, fields, values = {}, submitLabel = 'Salvar', 
     footer: html`${onDelete ? html`<button type="button" class="btn btn-danger-ghost" data-del>${icon('trash')}<span>Excluir</span></button>` : ''}<span class="spacer"></span><button type="button" class="btn btn-ghost" data-cancel>Cancelar</button><button type="button" class="btn btn-primary" data-save>${submitLabel}</button>`,
     onMount(m) {
       const form = m.body.querySelector('form');
+      if (fields.some((f) => f.showIf)) {
+        applyShowIf(form, fields);
+        form.addEventListener('change', () => applyShowIf(form, fields));
+        form.addEventListener('input', () => applyShowIf(form, fields));
+      }
       const err = form.querySelector('.form-error');
       const saveBtn = m.foot.querySelector('[data-save]');
       const save = async () => {

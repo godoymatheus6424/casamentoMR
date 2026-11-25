@@ -1,11 +1,24 @@
 import { state, create, update, remove, updateMany, saveSettings, emit } from '../store.js';
 import { html, icon, pageHead, chips, empty, formModal, toast, money, moneyShort, fmtDate, fmtDateShort, todayISO, progress, badge, run, sum, confirmDialog, downloadCSV, csvMoney } from '../ui.js';
-import { budgetCats, contractedVendors, paidOf } from '../domain.js';
+import { budgetCats, contractedVendors, paidOf, splitTotals } from '../domain.js';
 import { paymentForm, togglePaid, calendarDialog, isUpcoming } from '../forms.js';
 import { BUDGET_CATEGORIES } from '../seed.js';
 import { openVendor, vendorForm } from './vendors.js';
 
 const ui = { tab: 'categorias', pay: 'apagar' };
+
+// Quanto cada pessoa paga no casamento (conforme o "Quem paga" de cada fornecedor).
+function splitCard() {
+  const rows = splitTotals().filter((r) => r.contracted > 0.004 || r.paid > 0.004);
+  if (!rows.length) return '';
+  return html`<section class="card split-card">
+    <header class="card-head"><h2>Quanto cada um paga</h2><small class="muted">Pela divisão marcada em cada fornecedor</small></header>
+    <div class="split-table">
+      <div class="split-tr head"><span>Pessoa</span><span>Parte do contratado</span><span>Já pagou</span><span>Falta</span></div>
+      ${rows.map((r) => html`<div class="split-tr"><span><strong>${r.label}</strong></span><span>${money(r.contracted)}</span><span class="text-ok">${money(r.paid)}</span><span>${money(Math.max(0, r.contracted - r.paid))}</span></div>`)}
+    </div>
+  </section>`;
+}
 
 function totalForm() {
   formModal({
@@ -171,6 +184,7 @@ export default {
         <div class="kpi"><small>${free >= 0 ? 'Disponível' : 'Acima do orçamento'}</small><strong class="${free < 0 ? 'text-danger' : ''}">${total ? moneyShort(Math.abs(free)) : '—'}</strong></div>
       </div>
       ${total ? html`<div class="card progress-card">${progress(contracted / total, contracted > total ? 'danger' : '')}<span>${money(contracted)} contratados de ${money(total)}</span></div>` : ''}
+      ${splitCard()}
       <div class="tabs" role="tablist">
         <button type="button" class="tab ${ui.tab === 'categorias' ? 'active' : ''}" data-act="tab" data-val="categorias">Por categoria</button>
         <button type="button" class="tab ${ui.tab === 'pagamentos' ? 'active' : ''}" data-act="tab" data-val="pagamentos">Pagamentos</button>

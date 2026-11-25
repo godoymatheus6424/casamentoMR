@@ -47,7 +47,7 @@ Ao entrar, os noivos caem na área de **Finanças** (visual claro, pensado para 
 - **Cartões** com dia de fechamento e vencimento: cada compra e parcela cai na fatura certa; limite usado; pagar a fatura debita a conta.
 - **Orçamento** (limite por categoria), **metas**, **relatórios** (12 meses, saldo previsto, categorias, fixos x variáveis, para onde vai) e **exportação em CSV**.
 - **Do casal**: cada noivo(a) tem as próprias finanças e pode liberar (Mais › Ajustes) para o par ver, só leitura, na visão "Do casal". Família e assessoria não têm acesso.
-- As **parcelas dos fornecedores** do casamento entram sozinhas como despesas da categoria "Casamento".
+- As **parcelas dos fornecedores** do casamento entram sozinhas como despesas da categoria "Casamento", **só com a parte de cada um**: no fornecedor, **Quem paga** marca os noivos que dividem (por padrão, os dois) e outras pessoas (ex.: "Pais da noiva"), em partes iguais. O Orçamento mostra **quanto cada um paga** (contratado, pago e quanto falta). Em Finanças › Ajustes, cada um escolhe qual dos noivos é.
 
 ## Segurança
 

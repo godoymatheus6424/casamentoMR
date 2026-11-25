@@ -7,6 +7,8 @@
 // - Casamento: as parcelas dos fornecedores entram como despesas da categoria "Casamento".
 import { fin } from './data.js';
 import { todayISO, shiftISO, sum, norm } from '../ui.js';
+import { state } from '../store.js';
+import { names, splitPeople, shareOf, splitLabel } from '../domain.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 export const monthOf = (iso) => String(iso || '').slice(0, 7);
@@ -58,6 +60,24 @@ export function sources() {
 export const firstName = (n) => String(n || '').trim().split(/\s+/)[0] || '';
 export const partnerName = () => firstName(fin.partner?.name) || 'Seu par';
 const weddingIncluded = () => isCouple() || fin.settings.weddingInPersonal !== false;
+
+// Qual dos noivos (p1/p2, como no casamento) é cada um. Escolhido em Ajustes; sem escolha, pelo primeiro nome.
+export function guessSide() {
+  const me = norm(firstName(state.user?.name));
+  const n = names();
+  if (me && norm(firstName(n.p2)) === me) return 'p2';
+  return 'p1';
+}
+export const mySide = () => (fin.settings.weddingSide === 'p1' || fin.settings.weddingSide === 'p2' ? fin.settings.weddingSide : guessSide());
+export const partnerSide = () => {
+  const s = fin.partner?.settings?.weddingSide;
+  return s === 'p1' || s === 'p2' ? s : mySide() === 'p1' ? 'p2' : 'p1';
+};
+// Fração de um pagamento do casamento que cabe a um lado (pela divisão do fornecedor).
+function weddingShare(p, side) {
+  const v = p.vendorId ? fin.wedding.vendors.find((x) => x.id === p.vendorId) : null;
+  return shareOf(splitPeople(v?.split), side);
+}
 
 export function categoryOf(src, id) {
   if (id === WEDDING_CAT.id) return WEDDING_CAT;
@@ -136,20 +156,32 @@ function entryFromTx(src, t) {
 }
 function weddingEntries() {
   if (!weddingIncluded()) return [];
-  const vendors = new Map(fin.wedding.vendors.map((v) => [v.id, v.name]));
+  const vendors = new Map(fin.wedding.vendors.map((v) => [v.id, v]));
   const src = { owner: 'wedding', items: { categories: [], cards: [], accounts: [] } };
-  return fin.wedding.payments.filter((p) => p.dueDate || p.paidDate).map((p) => {
+  const sides = isCouple() ? [mySide(), partnerSide()] : [mySide()];
+  const out = [];
+  for (const p of fin.wedding.payments) {
+    if (!p.dueDate && !p.paidDate) continue;
+    const v = vendors.get(p.vendorId);
+    const people = splitPeople(v?.split);
+    // Só a parte de quem está nesta visão (eu, ou eu + meu par). Quem não divide, não vê.
+    const share = sum([...new Set(sides)], (side) => shareOf(people, side));
+    if (share <= 0) continue;
+    const full = Number(p.amount) || 0;
     const date = p.paid ? (p.paidDate || p.dueDate) : p.dueDate;
-    const vendor = vendors.get(p.vendorId);
-    return {
+    out.push({
       id: `w:${p.id}`, owner: 'wedding', src, wedding: p, kind: 'expense', readonly: true,
-      description: vendor ? `${vendor} · ${p.description || 'pagamento'}` : (p.description || 'Pagamento do casamento'),
-      amount: Number(p.amount) || 0, date, month: monthOf(date), paid: !!p.paid,
-      categoryId: WEDDING_CAT.id, party: vendor || '', method: p.method,
+      description: v ? `${v.name} · ${p.description || 'pagamento'}` : (p.description || 'Pagamento do casamento'),
+      amount: Math.round(full * share * 100) / 100, fullAmount: full, date, month: monthOf(date), paid: !!p.paid,
+      categoryId: WEDDING_CAT.id, party: v?.name || '', method: p.method,
       accountId: fin.settings.weddingAccountId || '',
-    };
-  });
+      split: people, shareLabel: share < 0.999 ? `${isCouple() ? 'parte do casal' : 'sua parte'} de ${money2(full)}` : '',
+      splitText: splitLabel(people),
+    });
+  }
+  return out;
 }
+const money2 = (v) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 // Todos os movimentos (sem os fixos previstos), com cache por versão dos dados.
 let cacheKey = null, cacheAll = null;
@@ -247,7 +279,6 @@ export function monthSummary(key) {
 export function accountBalances() {
   const out = [];
   const srcs = sources();
-  const weddingSource = srcs.find((s) => s.settings?.weddingAccountId && s.items.accounts.some((a) => a.id === s.settings.weddingAccountId));
   for (const src of srcs) {
     const bal = new Map(src.items.accounts.map((a) => [a.id, Number(a.initialBalance) || 0]));
     const add = (id, v) => { if (bal.has(id)) bal.set(id, bal.get(id) + v); };
@@ -266,8 +297,12 @@ export function accountBalances() {
         add(acc, -(typeof info === 'object' && info.amount != null ? Number(info.amount) || 0 : invoiceTotal(src, card, k)));
       }
     }
-    // Pagamentos do casamento já feitos saem da conta escolhida em Ajustes (na visão do casal, de uma só).
-    if (src === weddingSource) add(src.settings.weddingAccountId, -sum(fin.wedding.payments.filter((p) => p.paid), (p) => p.amount));
+    // Cada um paga a própria parte do casamento pela conta escolhida em Ajustes.
+    const wAcc = src.settings?.weddingAccountId;
+    if (wAcc && bal.has(wAcc)) {
+      const side = src.owner === 'me' ? mySide() : partnerSide();
+      add(wAcc, -sum(fin.wedding.payments.filter((p) => p.paid), (p) => (Number(p.amount) || 0) * weddingShare(p, side)));
+    }
     for (const a of src.items.accounts) out.push({ account: a, owner: src.owner, balance: bal.get(a.id) });
   }
   return out;

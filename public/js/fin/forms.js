@@ -117,45 +117,69 @@ export function txForm(t = {}, { kind = t.kind || 'expense', card = false } = {}
 export function recurringForm(r = {}, { kind = r.kind || 'expense' } = {}) {
   if (needAccount()) return;
   const isNew = !r.id;
+  const income = kind === 'income';
+  // "Repete" num campo só: todo mês, a cada N meses ou uma vez por ano.
+  const every = Math.max(2, Number(r.every) || 2);
+  const repeatOpts = [
+    { value: 'monthly', label: 'Todo mês' },
+    { value: 'every:2', label: 'A cada 2 meses' },
+    { value: 'every:3', label: 'A cada 3 meses (trimestral)' },
+    { value: 'every:6', label: 'A cada 6 meses (semestral)' },
+    { value: 'yearly', label: 'Uma vez por ano' },
+  ];
+  if (r.frequency === 'interval' && !repeatOpts.some((o) => o.value === `every:${every}`)) repeatOpts.splice(4, 0, { value: `every:${every}`, label: `A cada ${every} meses` });
+  const repeat = r.frequency === 'yearly' ? 'yearly' : r.frequency === 'interval' ? `every:${every}` : 'monthly';
   const values = {
-    day: 5, frequency: 'monthly', every: 2, month: String(new Date().getMonth() + 1), start: thisMonth(), end: '', active: true,
+    day: 5, month: String(new Date().getMonth() + 1), start: thisMonth(), end: '',
     payWith: r.cardId ? `c:${r.cardId}` : `a:${r.accountId || fin.items.accounts[0].id}`, accountId: fin.items.accounts[0].id,
     ...r,
+    repeat, paused: r.active === false,
+    more: !isNew && !!(r.end || r.variable || r.active === false || r.notes),
   };
   if (r.month) values.month = String(r.month);
-  const income = kind === 'income';
+  const more = (v) => v.more;
   formModal({
     title: isNew ? (income ? 'Nova receita fixa' : 'Novo gasto fixo') : (income ? 'Receita fixa' : 'Gasto fixo'),
-    intro: isNew ? (income ? 'O que você recebe todo mês (ou todo ano): salário, aluguel que recebe, pensão…' : 'O que se repete: aluguel, condomínio, luz, internet, academia, assinaturas…') : '',
+    intro: isNew ? (income ? 'Salário, pró-labore, aluguel que você recebe, pensão…' : 'Aluguel, condomínio, luz, internet, academia, assinaturas…') : '',
     values,
     fields: [
-      { name: 'description', label: 'Descrição', required: true, full: true, placeholder: income ? 'Ex.: Salário' : 'Ex.: Aluguel, Netflix, Luz' },
-      { name: 'amount', label: 'Valor', type: 'money', required: true, hint: 'Se muda todo mês, coloque a média.' },
+      { name: 'description', label: income ? 'O que é' : 'Descrição', required: true, full: true, placeholder: income ? 'Ex.: Salário' : 'Ex.: Aluguel, Netflix, Luz' },
+      { name: 'amount', label: income ? 'Quanto você recebe' : 'Valor', type: 'money', required: true },
       { name: 'day', label: income ? 'Dia que cai' : 'Dia do vencimento', type: 'number', min: 1, max: 31, required: true },
-      { name: 'frequency', label: 'Repete', type: 'select', options: [{ value: 'monthly', label: 'Todo mês' }, { value: 'interval', label: 'A cada X meses' }, { value: 'yearly', label: 'Uma vez por ano' }] },
-      { name: 'every', label: 'A cada quantos meses', type: 'number', min: 2, max: 12, hint: 'Só para "A cada X meses".' },
-      { name: 'month', label: 'Mês (anual)', type: 'select', options: MONTHS, hint: 'Só para "Uma vez por ano" (IPVA, IPTU, seguro…).' },
-      { name: 'categoryId', label: 'Categoria', type: 'select', options: catOptions(kind) },
-      income
-        ? { name: 'accountId', label: 'Entra na conta', type: 'select', options: accountOptions() }
-        : { name: 'payWith', label: 'Pago com', type: 'select', options: payWithOptions(), hint: 'No cartão, entra sozinho em cada fatura.' },
-      { name: 'party', label: income ? 'De onde vem' : 'Para onde vai', placeholder: income ? 'Empresa, cliente…' : 'Imobiliária, operadora…', list: knownParties(kind), full: true },
-      { name: 'start', label: 'Começa em', type: 'select', options: monthOptions() },
-      { name: 'end', label: 'Termina em', type: 'select', options: monthOptions({ empty: 'Sem data para acabar', back: 0, ahead: 120 }) },
-      { name: 'variable', label: 'O valor muda todo mês (ex.: luz, água)', type: 'checkbox', full: true },
-      ...(isNew ? [] : [{ name: 'active', label: 'Ativo', type: 'checkbox', full: true, hint: 'Desligue para pausar sem apagar o histórico.' }]),
-      { name: 'notes', label: 'Observações', type: 'textarea', rows: 2, full: true },
+      { name: 'repeat', label: 'Repete', type: 'select', options: repeatOpts },
+      { name: 'month', label: 'Em qual mês', type: 'select', options: MONTHS, showIf: (v) => v.repeat === 'yearly' },
+      ...(income ? [
+        { name: 'party', label: 'De onde vem', placeholder: 'Empresa, cliente, pessoa…', list: knownParties(kind) },
+        { name: 'accountId', label: 'Entra na conta', type: 'select', options: accountOptions() },
+        { name: 'categoryId', label: 'Categoria', type: 'select', options: catOptions(kind) },
+      ] : [
+        { name: 'categoryId', label: 'Categoria', type: 'select', options: catOptions(kind) },
+        { name: 'payWith', label: 'Pago com', type: 'select', options: payWithOptions(), hint: 'No cartão, entra sozinho em cada fatura.' },
+        { name: 'party', label: 'Para onde vai', placeholder: 'Imobiliária, operadora, loja…', list: knownParties(kind) },
+      ]),
+      { name: 'more', label: 'Mais opções (início e fim, valor que varia, pausar)', type: 'checkbox', full: true },
+      { name: 'start', label: 'Começa em', type: 'select', options: monthOptions(), showIf: more },
+      { name: 'end', label: 'Termina em', type: 'select', options: monthOptions({ empty: 'Não tem fim', back: 0, ahead: 120 }), showIf: more },
+      { name: 'variable', label: 'O valor muda todo mês (ex.: luz, água)', type: 'checkbox', full: true, hint: 'Use a média como valor; na hora de confirmar o mês, você ajusta.', showIf: more },
+      ...(isNew ? [] : [{ name: 'paused', label: 'Pausado (não aparece nos próximos meses)', type: 'checkbox', full: true, showIf: more }]),
+      { name: 'notes', label: 'Observações', type: 'textarea', rows: 2, full: true, showIf: more },
     ],
     onSubmit: async (d) => {
       if (!(d.amount > 0)) throw Object.assign(new Error('Informe um valor maior que zero.'), { field: 'amount' });
       const day = Math.round(d.day);
       if (!(day >= 1 && day <= 31)) throw Object.assign(new Error('O dia vai de 1 a 31.'), { field: 'day' });
-      if (d.end && d.end < d.start) throw Object.assign(new Error('O fim não pode ser antes do começo.'), { field: 'end' });
+      // Campos de "Mais opções" escondidos mantêm o que já estava salvo.
+      const start = d.start ?? r.start ?? thisMonth();
+      const endM = d.end ?? r.end ?? '';
+      if (endM && endM < start) throw Object.assign(new Error('O fim não pode ser antes do começo.'), { field: 'end' });
+      const rep = String(d.repeat || 'monthly');
       const data = {
-        kind, description: d.description, amount: d.amount, day, frequency: d.frequency,
-        every: Math.max(2, Math.min(12, Math.round(d.every || 2))), month: Number(d.month) || 1,
-        categoryId: d.categoryId || '', party: d.party || '', start: d.start, end: d.end || '',
-        variable: !!d.variable, active: isNew ? true : !!d.active, notes: d.notes || '',
+        kind, description: d.description, amount: d.amount, day,
+        frequency: rep === 'yearly' ? 'yearly' : rep.startsWith('every:') ? 'interval' : 'monthly',
+        every: rep.startsWith('every:') ? Number(rep.split(':')[1]) : (r.every || 2),
+        month: Number(d.month ?? r.month) || 1,
+        categoryId: d.categoryId || '', party: d.party || '', start, end: endM,
+        variable: d.variable ?? !!r.variable, active: d.paused === undefined ? r.active !== false : !d.paused, notes: d.notes ?? r.notes ?? '',
       };
       if (income) Object.assign(data, { accountId: d.accountId, cardId: '' });
       else {
@@ -365,6 +389,7 @@ export function entryInfo(e) {
         ${e.party ? html`<dt>${e.kind === 'income' ? 'De onde vem' : 'Para onde vai'}</dt><dd>${e.party}</dd>` : ''}
         ${e.card ? html`<dt>Cartão</dt><dd>${e.card.name} · fatura de ${monthLabel(e.invoice).toLowerCase()}</dd>` : ''}
         ${e.method ? html`<dt>Forma</dt><dd>${e.method}</dd>` : ''}
+        ${e.split && e.split.length > 1 ? html`<dt>Valor total</dt><dd>${money(e.fullAmount)}</dd><dt>Dividido entre</dt><dd>${e.splitText} (${money(e.fullAmount / e.split.length)} cada)</dd>` : ''}
         <dt>Situação</dt><dd>${e.paid ? (e.kind === 'income' ? 'Recebido' : 'Pago') : 'Pendente'}</dd>
       </dl>
       ${who ? html`<p class="fin-note">${who}${e.owner === 'wedding' ? '. Para mudar, abra o casamento › Fornecedores.' : '. Só quem lançou pode editar.'}</p>` : ''}

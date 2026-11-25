@@ -1,5 +1,5 @@
 import { state } from './store.js';
-import { shiftISO, sum } from './ui.js';
+import { shiftISO, sum, norm } from './ui.js';
 
 export const PERIODS = [
   { key: '12', label: '12 meses ou mais antes', off: { m: -12 } },
@@ -83,6 +83,53 @@ export function sideLabel(side) {
 export function assigneeOptions() {
   const n = names();
   return ['', n.p1, n.p2, 'Os dois', 'Assessoria', 'Família', 'Padrinhos'].map((v) => ({ value: v, label: v || '—' }));
+}
+
+// ---------------------------------------------------------------------------
+// Quem paga cada despesa do casamento (divisão em partes iguais)
+// ---------------------------------------------------------------------------
+// split = { p1: bool, p2: bool, others: ['Pais da Ana', …] }. Sem split: os dois noivos dividem.
+export const DEFAULT_SPLIT = { p1: true, p2: true, others: [] };
+export function splitPeople(split) {
+  const s = split || DEFAULT_SPLIT;
+  const n = names();
+  const out = [];
+  if (s.p1 !== false) out.push({ key: 'p1', label: n.p1 });
+  if (s.p2 !== false) out.push({ key: 'p2', label: n.p2 });
+  for (const o of s.others || []) {
+    const t = String(o || '').trim();
+    if (t && !out.some((x) => norm(x.label) === norm(t))) out.push({ key: `x:${norm(t)}`, label: t });
+  }
+  return out.length ? out : splitPeople(DEFAULT_SPLIT);
+}
+export const vendorSplit = (v) => splitPeople(v?.split);
+// Parte de uma pessoa ('p1', 'p2' ou 'x:nome') num fornecedor (0 se ela não divide).
+export function shareOf(people, key) {
+  return people.some((p) => p.key === key) ? 1 / people.length : 0;
+}
+export function splitLabel(people) {
+  const l = people.map((p) => p.label);
+  return l.length <= 1 ? (l[0] || '') : `${l.slice(0, -1).join(', ')} e ${l[l.length - 1]}`;
+}
+// Totais por pessoa: parte do que foi contratado, do que já foi pago e do que falta.
+export function splitTotals() {
+  const map = new Map();
+  const add = (p, field, v) => {
+    const r = map.get(p.key) || { key: p.key, label: p.label, contracted: 0, paid: 0 };
+    r[field] += v;
+    map.set(p.key, r);
+  };
+  for (const v of contractedVendors()) {
+    const people = vendorSplit(v);
+    for (const p of people) add(p, 'contracted', (Number(v.price) || 0) / people.length);
+  }
+  for (const pay of state.items.payments) {
+    if (!pay.paid) continue;
+    const v = pay.vendorId ? state.items.vendors.find((x) => x.id === pay.vendorId) : null;
+    const people = vendorSplit(v);
+    for (const p of people) add(p, 'paid', (Number(pay.amount) || 0) / people.length);
+  }
+  return [...map.values()];
 }
 
 export const guestPeople = (g) => (Number(g.adults) || 0) + (Number(g.children) || 0);
