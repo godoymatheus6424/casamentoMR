@@ -4,10 +4,10 @@ import { fin, setScope, toggleHidden, valuesHidden, saveFinSettings, fupdate } f
 import {
   thisMonth, addMonths, monthLabel, monthOf, monthSummary, monthEntries, accountBalances, totalBalance, upcoming, history,
   recurringTotals, categoryOf, myCategories, sources, isCouple, partnerName, firstName, FREQ_LABEL, ACCOUNT_TYPES, mySide, autoFixed,
-  invoiceDue, invoiceClosing, dayIn, forecast, dailyBudget, dailyLeft, installmentPlans, invoiceEntries, invoiceTotal, currentInvoiceKey, cardUsed, recurringHits, fulfilledRecurring, WEDDING_CAT,
+  invoiceDue, invoiceClosing, dayIn, forecast, dailyBudget, dailyLeft, installmentPlans, invoiceStatus, invoicePayments, invoiceEntries, invoiceTotal, currentInvoiceKey, cardUsed, recurringHits, fulfilledRecurring, WEDDING_CAT,
 } from './model.js';
 import {
-  txForm, recurringForm, confirmOccurrence, markPaid, accountForm, cardForm, payInvoiceForm, reopenInvoice, categoryForm,
+  txForm, recurringForm, confirmOccurrence, markPaid, accountForm, cardForm, payInvoiceForm, removeInvoicePayment, categoryForm,
   goalForm, goalDepositForm, entryInfo, adjustBalanceForm, dailyBudgetForm,
 } from './forms.js';
 import { state } from '../store.js';
@@ -148,16 +148,16 @@ function dayMap(key) {
   for (const e of monthEntries(key)) if (!e.card && e.kind !== 'transfer' && e.month === key && monthOf(e.date) === key) push(e);
   for (const src of sources()) {
     for (const card of src.items.cards) {
-      const total = invoiceTotal(src, card, key);
-      if (total <= 0) continue;
-      push({ id: `inv:${card.id}:${key}`, invoiceOf: card, invoice: key, owner: src.owner, src, kind: 'expense', description: `Fatura ${card.name}`, amount: total, date: invoiceDue(card, key), paid: !!card.paidInvoices?.[key] });
+      const inv = invoiceStatus(src, card, key);
+      if (inv.total <= 0) continue;
+      push({ id: `inv:${card.id}:${key}`, invoiceOf: card, invoice: key, owner: src.owner, src, kind: 'expense', description: `Fatura ${card.name}${inv.partial ? ' (restante)' : ''}`, amount: inv.partial ? inv.left : inv.total, date: invoiceDue(card, key), paid: inv.isPaid, partial: inv.partial });
     }
   }
   return map;
 }
 function dayRow(e) {
   const c = e.invoiceOf ? { emoji: '💳', color: e.invoiceOf.color || '#1C1C1E', name: 'Fatura' } : categoryOf(e.src, e.categoryId);
-  const st = e.invoiceOf ? (e.paid ? { label: 'paga', cls: 'green' } : { label: 'fatura', cls: 'gray' }) : statusOf(e);
+  const st = e.invoiceOf ? (e.paid ? { label: 'paga', cls: 'green' } : e.partial ? { label: 'paga em parte', cls: 'orange' } : { label: 'fatura', cls: 'gray' }) : statusOf(e);
   const mine = e.owner === 'me' && !e.readonly;
   const month = e.invoice || e.month || monthOf(e.date);
   const late = !e.paid && e.date < todayISO();
@@ -614,11 +614,12 @@ function cartoes() {
   const { src, card } = cur;
   const key = ui.cardKey.startsWith(`${card.id}:`) ? ui.cardKey.split(':')[1] : currentInvoiceKey(card);
   const items = invoiceEntries(src, card, key).map((e) => ({ ...e, month: key }));
-  const total = invoiceTotal(src, card, key);
-  const paid = card.paidInvoices?.[key];
+  const inv = invoiceStatus(src, card, key);
+  const total = inv.total;
+  const pays = invoicePayments(card, key);
   const due = invoiceDue(card, key), closing = invoiceClosing(card, key);
   const today = todayISO();
-  const st = paid ? ['green', 'Paga'] : due < today ? ['red', 'Vencida'] : closing <= today ? ['orange', 'Fechada'] : ['blue', 'Aberta'];
+  const st = inv.isPaid ? ['green', 'Paga'] : inv.partial ? [due < today ? 'red' : 'orange', due < today ? 'Paga em parte · vencida' : 'Paga em parte'] : due < today && total > 0 ? ['red', 'Vencida'] : closing <= today ? ['orange', 'Fechada'] : ['blue', 'Aberta'];
   const used = cardUsed(src, card);
   const limit = Number(card.limit) || 0;
   const mine = src.owner === 'me';
@@ -651,9 +652,14 @@ function cartoes() {
             <div><span class="fin-label">Total da fatura</span><strong class="fin-kpi-amt big">${amt(total)}</strong></div>
             <span class="fin-pill ${st[0]}">${st[1]}</span>
           </div>
-          <div class="fin-invoice-dates"><span>Fecha <b>${fmtDate(closing)}</b></span><span>Vence <b>${fmtDate(due)}</b></span>${paid && typeof paid === 'object' ? html`<span>Paga em <b>${fmtDate(paid.date)}</b></span>` : ''}</div>
+          <div class="fin-invoice-dates"><span>Fecha <b>${fmtDate(closing)}</b></span><span>Vence <b>${fmtDate(due)}</b></span></div>
+          ${inv.hasPayments ? html`<div class="fin-inv-paid">
+            ${meter(total > 0 ? inv.paid / total : 1, inv.isPaid ? 'var(--f-green)' : 'var(--f-orange)')}
+            <div class="fin-inv-paid-row"><span>Pago <b class="pos">${amt(inv.paid)}</b></span>${inv.left > 0 ? html`<span>Falta <b class="neg">${amt(inv.left)}</b></span>` : ''}</div>
+            <div class="fin-inv-pays">${pays.map((p, i) => html`<div class="fin-inv-pay"><span>${p.date ? fmtDate(p.date) : 'pagamento'}${p.accountId ? html` · ${fin.items.accounts.find((a) => a.id === p.accountId)?.name || ''}` : ''}</span><b class="amt">${money(p.amount != null ? p.amount : total)}</b>${mine ? html`<button type="button" class="btn-icon sm" data-act="inv-unpay" data-v="${i}" title="Desfazer este pagamento" aria-label="Desfazer este pagamento">${icon('x')}</button>` : ''}</div>`)}</div>
+          </div>` : ''}
           ${mine ? html`<div class="fin-invoice-actions">
-            ${paid ? html`<button type="button" class="fin-btn ghost" data-act="inv-reopen">Desfazer pagamento</button>` : total > 0 ? html`<button type="button" class="fin-btn" data-act="inv-pay">Pagar fatura</button>` : ''}
+            ${!inv.isPaid && total > 0 ? html`<button type="button" class="fin-btn" data-act="inv-pay">${inv.partial ? `Pagar o restante (${money(inv.left)})` : 'Pagar fatura'}</button>` : ''}
             <button type="button" class="fin-btn ghost" data-act="card-buy">${icon('plus')} Compra</button>
             <button type="button" class="fin-btn ghost" data-act="card-edit">${icon('edit')} Editar cartão</button>
           </div>` : ''}
@@ -931,12 +937,12 @@ export function mountFin(el, emitView) {
         emitView();
         break;
       }
-      case 'inv-pay': case 'inv-reopen': case 'card-buy': case 'card-edit': {
+      case 'inv-pay': case 'inv-unpay': case 'card-buy': case 'card-edit': {
         const card = fin.items.cards.find((c) => c.id === ui.cardId);
         if (!card) break;
         const key = ui.cardKey.startsWith(`${card.id}:`) ? ui.cardKey.split(':')[1] : currentInvoiceKey(card);
         if (act === 'inv-pay') payInvoiceForm(card, key);
-        else if (act === 'inv-reopen') run(() => reopenInvoice(card, key));
+        else if (act === 'inv-unpay') run(() => removeInvoicePayment(card, key, Number(a.dataset.v)));
         else if (act === 'card-buy') txForm({ cardId: card.id }, { kind: 'expense', card: true });
         else cardForm(card);
         break;

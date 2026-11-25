@@ -684,3 +684,11 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
 .fin-row-amt small { font-size: 12px; font-weight: 500; margin-left: 2px; }
 .small-date { font-size: 12px; }
 .fin-fixed small.fin-muted { display: block; font-size: 12px; }
+/* Pagamentos da fatura (inteiro ou em partes) */
+.fin-inv-paid { display: grid; gap: 8px; padding: 10px 12px; border-radius: 14px; background: rgba(118, 118, 128, .07); }
+.fin-inv-paid-row { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; color: var(--muted); }
+.fin-inv-paid-row b { font-weight: 700; }
+.fin-inv-pays { display: grid; gap: 2px; }
+.fin-inv-pay { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--ink-2); }
+.fin-inv-pay span { flex: 1; min-width: 0; }
+.fin-inv-pay .btn-icon { color: var(--muted); }

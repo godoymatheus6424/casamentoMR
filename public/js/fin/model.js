@@ -153,7 +153,7 @@ function entryFromTx(src, t) {
   if (card) {
     e.card = card;
     e.invoice = invoiceKey(card, t.date);
-    e.paid = !!card.paidInvoices?.[e.invoice];
+    e.paid = invoiceIsPaid(src, card, e.invoice);
     e.month = e.invoice;
   } else e.month = monthOf(t.date);
   return e;
@@ -223,7 +223,7 @@ function cardRecurring(src, key, onlyCard = null) {
       if (!recurringHits(r, m) || src.items.transactions.some((t) => t.recurringId === r.id && t.period === m)) continue;
       const occ = recurringOccurrence(src, r, m);
       if (invoiceKey(card, occ.date) !== key) continue;
-      Object.assign(occ, { card, invoice: key, month: key, paid: !!card.paidInvoices?.[key], auto: true });
+      Object.assign(occ, { card, invoice: key, month: key, auto: true });
       out.push(occ);
     }
   }
@@ -244,7 +244,7 @@ export function monthEntries(key) {
       if (autoFixed(src) && occ.date <= todayISO()) { occ.paid = true; occ.assumed = true; }
       out.push(occ);
     }
-    out.push(...cardRecurring(src, key));
+    for (const occ of cardRecurring(src, key)) out.push(Object.assign(occ, { paid: invoiceIsPaid(src, occ.card, key) }));
   }
   return out.sort((a, b) => a.date.localeCompare(b.date) || String(a.description).localeCompare(String(b.description)));
 }
@@ -296,12 +296,10 @@ export function accountBalances() {
       else if (t.kind === 'expense') add(t.accountId, -v);
       else if (t.kind === 'transfer') { add(t.accountId, -v); add(t.toAccountId, v); }
     }
-    // Faturas pagas saem da conta escolhida no pagamento (ou da conta padrão do cartão).
+    // Pagamentos de fatura (inteiros ou parciais) saem da conta escolhida em cada um (ou da conta do cartão).
     for (const card of src.items.cards) {
-      for (const [k, info] of Object.entries(card.paidInvoices || {})) {
-        const acc = (typeof info === 'object' && info.accountId) || card.accountId;
-        // Usa o valor pago guardado; sem ele, o total atual da fatura.
-        add(acc, -(typeof info === 'object' && info.amount != null ? Number(info.amount) || 0 : invoiceTotal(src, card, k)));
+      for (const k of Object.keys(card.paidInvoices || {})) {
+        for (const pay of invoicePayments(card, k)) add(pay.accountId || card.accountId, -(pay.amount != null ? Number(pay.amount) || 0 : invoiceRaw(src, card, k)));
       }
     }
     // Cada um paga a própria parte do casamento pela conta escolhida em Ajustes.
@@ -333,19 +331,52 @@ export const totalBalance = () => sum(accountBalances().filter((b) => b.account.
 // ---------------------------------------------------------------------------
 // Faturas
 // ---------------------------------------------------------------------------
+// Pagamentos de uma fatura. Formato atual: { payments: [{ date, accountId, amount }] }.
+// Formatos antigos: { date, accountId, amount } (um pagamento) ou true/data (paga inteira).
+export function invoicePayments(card, key) {
+  const info = card.paidInvoices?.[key];
+  if (!info) return [];
+  if (Array.isArray(info.payments)) return info.payments;
+  if (typeof info === 'object') return [{ date: info.date || '', accountId: info.accountId || '', amount: info.amount }];
+  return [{ date: typeof info === 'string' ? info : '', accountId: '', amount: undefined }];
+}
+// Total da fatura (compras e assinaturas do período), sem olhar se foi paga.
+function invoiceRaw(src, card, key) {
+  let total = 0;
+  for (const t of src.items.transactions) {
+    if (t.skipped || t.cardId !== card.id || invoiceKey(card, t.date) !== key) continue;
+    total += t.kind === 'income' ? -(Number(t.amount) || 0) : Number(t.amount) || 0;
+  }
+  return total + sum(cardRecurring(src, key, card), (e) => e.amount);
+}
+// Quanto já foi pago e quanto falta (com cache por versão dos dados).
+const invCache = new Map();
+function invoiceState(src, card, key) {
+  const ck = `${fin.version}|${fin.loadedAt}|${src.owner}|${card.id}|${key}`;
+  if (invCache.has(ck)) return invCache.get(ck);
+  if (invCache.size > 2000) invCache.clear();
+  const total = invoiceRaw(src, card, key);
+  const pays = invoicePayments(card, key);
+  const paid = sum(pays, (p) => (p.amount != null ? Number(p.amount) || 0 : total));
+  const st = { total, paid, left: Math.max(0, Math.round((total - paid) * 100) / 100), hasPayments: pays.length > 0 };
+  st.isPaid = st.hasPayments && st.left < 0.01;
+  st.partial = st.hasPayments && !st.isPaid;
+  invCache.set(ck, st);
+  return st;
+}
+export const invoiceIsPaid = (src, card, key) => invoiceState(src, card, key).isPaid;
+export const invoiceStatus = invoiceState;
 export function invoiceEntries(src, card, key) {
   const out = [];
+  const paid = invoiceIsPaid(src, card, key); // no cartão, a situação é a da fatura (não a do lançamento)
   for (const t of src.items.transactions) {
     if (t.skipped || t.cardId !== card.id) continue;
-    // No cartão, a situação é a da fatura (não a do lançamento).
-    if (invoiceKey(card, t.date) === key) out.push({ ...t, owner: src.owner, src, tx: t, card, amount: Number(t.amount) || 0, invoice: key, paid: !!card.paidInvoices?.[key] });
+    if (invoiceKey(card, t.date) === key) out.push({ ...t, owner: src.owner, src, tx: t, card, amount: Number(t.amount) || 0, invoice: key, paid });
   }
-  out.push(...cardRecurring(src, key, card));
+  for (const occ of cardRecurring(src, key, card)) out.push(Object.assign(occ, { paid }));
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
-export function invoiceTotal(src, card, key) {
-  return sum(invoiceEntries(src, card, key), (e) => (e.kind === 'income' ? -e.amount : e.amount));
-}
+export const invoiceTotal = (src, card, key) => invoiceRaw(src, card, key);
 // Fatura "atual": a que recebe as compras de hoje.
 export const currentInvoiceKey = (card) => invoiceKey(card, todayISO());
 // Limite usado: tudo o que está em faturas ainda não pagas (inclui parcelas futuras).
@@ -354,7 +385,7 @@ export function cardUsed(src, card) {
   for (const t of src.items.transactions) if (t.cardId === card.id && !t.skipped) keys.add(invoiceKey(card, t.date));
   keys.add(currentInvoiceKey(card));
   let used = 0;
-  for (const k of keys) if (!card.paidInvoices?.[k]) used += invoiceTotal(src, card, k);
+  for (const k of keys) used += invoiceState(src, card, k).left;
   return used;
 }
 
@@ -376,10 +407,9 @@ export function upcoming(days = 20) {
     for (const card of src.items.cards) {
       for (const k of [thisMonth(), addMonths(thisMonth(), 1)]) {
         const due = invoiceDue(card, k);
-        if (card.paidInvoices?.[k] || due > limit) continue;
-        const total = invoiceTotal(src, card, k);
-        if (total <= 0) continue;
-        out.push({ id: `inv:${card.id}:${k}`, invoiceOf: card, invoice: k, owner: src.owner, src, kind: 'expense', description: `Fatura ${card.name}`, amount: total, date: due, late: due < today, categoryId: '' });
+        const st = invoiceState(src, card, k);
+        if (st.isPaid || st.left <= 0 || due > limit) continue;
+        out.push({ id: `inv:${card.id}:${k}`, invoiceOf: card, invoice: k, owner: src.owner, src, kind: 'expense', description: `Fatura ${card.name}${st.partial ? ' (restante)' : ''}`, amount: st.left, date: due, late: due < today, categoryId: '' });
       }
     }
   }

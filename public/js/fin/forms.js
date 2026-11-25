@@ -2,7 +2,7 @@
 import { fin, fById, fcreate, fbulk, fupdate, fremove, saveFinSettings } from './data.js';
 import {
   ACCOUNT_TYPES, COLORS, COLOR_NAMES, myCategories, knownParties, thisMonth, addMonths, monthLabel, monthOf, dayIn,
-  invoiceKey, invoiceDue, invoiceTotal, sources, partnerName, categoryOf, FREQ_LABEL, accountBalances, ADJUST_CAT,
+  invoiceKey, invoiceDue, invoiceTotal, invoiceStatus, invoicePayments, sources, partnerName, categoryOf, FREQ_LABEL, accountBalances, ADJUST_CAT,
 } from './model.js';
 import { html, icon, formModal, openModal, toast, todayISO, shiftISO, money, fmtDate, confirmDialog, run } from '../ui.js';
 import { attachField, bindAttachments } from '../forms.js';
@@ -361,29 +361,38 @@ export function cardForm(c = {}) {
 
 export function payInvoiceForm(card, key) {
   const src = sources().find((s) => s.owner === 'me');
-  const total = invoiceTotal(src, card, key);
+  const st = invoiceStatus(src, card, key);
+  const done = invoicePayments(card, key);
   formModal({
-    title: `Pagar fatura ${card.name}`,
-    intro: `Fatura de ${monthLabel(key).toLowerCase()}, vence em ${fmtDate(invoiceDue(card, key))}. Total: ${money(total)}.`,
-    values: { amount: total, date: todayISO(), accountId: card.accountId || fin.items.accounts[0]?.id },
+    title: st.partial ? `Pagar o restante · ${card.name}` : `Pagar fatura ${card.name}`,
+    intro: `Fatura de ${monthLabel(key).toLowerCase()}, vence em ${fmtDate(invoiceDue(card, key))}. Total: ${money(st.total)}${st.paid ? `, já pago ${money(st.paid)}, falta ${money(st.left)}` : ''}. Pode pagar só uma parte: o que faltar continua em aberto nesta fatura.`,
+    values: { amount: st.left || st.total, date: todayISO(), accountId: card.accountId || fin.items.accounts[0]?.id },
     fields: [
-      { name: 'amount', label: 'Valor pago', type: 'money', required: true, full: true },
+      { name: 'amount', label: 'Valor pago agora', type: 'money', required: true, full: true },
       { name: 'date', label: 'Pago em', type: 'date', required: true },
       { name: 'accountId', label: 'Saiu da conta', type: 'select', options: accountOptions() },
     ],
-    submitLabel: 'Pagar',
+    submitLabel: 'Registrar pagamento',
     onSubmit: async (d) => {
-      await fupdate('cards', card.id, { paidInvoices: { ...(card.paidInvoices || {}), [key]: { date: d.date, accountId: d.accountId, amount: d.amount } } });
-      toast('Fatura paga');
+      if (!(d.amount > 0)) throw Object.assign(new Error('Informe o valor pago.'), { field: 'amount' });
+      // Mantém os pagamentos anteriores (os antigos sem valor contam como o total da época).
+      const payments = [...done.map((p) => ({ date: p.date || '', accountId: p.accountId || card.accountId || '', amount: p.amount != null ? Number(p.amount) : st.total })), { date: d.date, accountId: d.accountId, amount: d.amount }];
+      await fupdate('cards', card.id, { paidInvoices: { ...(card.paidInvoices || {}), [key]: { payments } } });
+      const left = Math.round((st.left - d.amount) * 100) / 100;
+      toast(left > 0.009 ? `Pagamento parcial registrado. Falta ${money(left)}.` : 'Fatura paga');
     },
   });
 }
-export async function reopenInvoice(card, key) {
-  if (!(await confirmDialog('Desfazer o pagamento desta fatura?', { ok: 'Desfazer', danger: false }))) return;
+// Desfaz um pagamento da fatura (o de número idx na lista).
+export async function removeInvoicePayment(card, key, idx) {
+  const pays = invoicePayments(card, key);
+  const p = pays[idx];
+  if (!p || !(await confirmDialog(`Desfazer o pagamento${p.amount != null ? ` de ${money(p.amount)}` : ''}${p.date ? ` feito em ${fmtDate(p.date)}` : ''}?`, { ok: 'Desfazer', danger: false }))) return;
+  const rest = pays.filter((_, i) => i !== idx);
   const paid = { ...(card.paidInvoices || {}) };
-  delete paid[key];
+  if (rest.length) paid[key] = { payments: rest }; else delete paid[key];
   await fupdate('cards', card.id, { paidInvoices: paid });
-  toast('Fatura reaberta');
+  toast('Pagamento desfeito');
 }
 
 export function categoryForm(c = {}, { kind = c.kind || 'expense' } = {}) {
