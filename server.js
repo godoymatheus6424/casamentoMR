@@ -1402,9 +1402,18 @@ route('POST', '/api/atalho', async ({ req, res }) => {
 
   const tipo = normTxt(b.tipo);
   const kind = /^(recebimento|receita|entrada|income|recebi|ganho)/.test(tipo) ? 'income' : 'expense';
+  // Também aceita tudo numa frase só ("45,90 mercado", "mercado 45.90", "R$ 1.200 freela").
+  if (b.valor == null && b.texto != null) {
+    const t = String(b.texto).trim();
+    const m = t.match(/(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)(?:\s*reais)?/i);
+    if (m) { b.valor = m[1]; b.descricao = b.descricao || (t.slice(0, m.index) + ' ' + t.slice(m.index + m[0].length)).replace(/\s+/g, ' ').replace(/^[\s,;:-]+|[\s,;:-]+$/g, ''); }
+  }
   const amount = Math.round(parseAmount(b.valor) * 100) / 100;
-  if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) return textReply(res, 400, 'Valor inválido. Digite só o número, por exemplo 45,90.');
-  const description = String(b.descricao || b.descrição || '').trim().slice(0, 200) || (kind === 'income' ? 'Recebimento' : 'Gasto');
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) {
+    return textReply(res, 400, b.texto != null ? 'Não achei o valor. Escreva assim: 45,90 mercado' : 'Valor inválido. Digite só o número, por exemplo 45,90.');
+  }
+  let description = String(b.descricao || b.descrição || '').trim().slice(0, 200) || (kind === 'income' ? 'Recebimento' : 'Gasto');
+  description = description.charAt(0).toLocaleUpperCase('pt-BR') + description.slice(1);
 
   finSeed(userId);
   const items = finItems(userId);

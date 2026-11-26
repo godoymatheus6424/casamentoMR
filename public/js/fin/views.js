@@ -914,9 +914,13 @@ async function shortcutDialog() {
     body: () => {
       if (!st.info) return html`<div class="fin-loading"><span class="spinner"></span></div>`;
       const on = st.info.active;
+      const aiPrompt = `Crie um atalho chamado "Lançar gasto" com exatamente estas 3 ações, nesta ordem, sem usar nenhum modelo de IA dentro do atalho:
+1. Pedir Entrada, do tipo Texto, com a pergunta "Quanto e com o quê? (ex.: 45,90 mercado)".
+2. Obter Conteúdo do URL, no endereço ${url}, método POST, corpo da solicitação JSON com três campos de texto: "chave" com o valor ${st.token || 'COLE_SUA_CHAVE_AQUI'}, "tipo" com o valor "gasto" e "texto" com a Entrada Fornecida da ação 1.
+3. Mostrar Notificação com o Conteúdo do URL.`;
       const used = st.info.lastUsedAt ? `usada pela última vez em ${new Date(st.info.lastUsedAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : 'ainda não usada';
       return html`<div class="fin-shortcut">
-        <p>Crie um atalho no app <b>Atalhos</b> que pergunta <b>quanto</b> e <b>com o quê</b> e lança o gasto direto nas suas finanças. Depois coloque esse atalho na <b>Central de Controle</b>, no <b>botão de Ação</b> ou chame pela <b>Siri</b>.</p>
+        <p>Crie um atalho no app <b>Atalhos</b> que pergunta <b>quanto e com o quê</b> (ex.: <i>45,90 mercado</i>) e lança o gasto direto nas suas finanças. Depois coloque esse atalho na <b>Central de Controle</b>, no <b>botão de Ação</b> ou chame pela <b>Siri</b>.</p>
         ${st.err ? html`<p class="fin-err">${st.err}</p>` : ''}
         <div class="fin-card fin-shortcut-key">
           ${codeRow('Endereço', url)}
@@ -930,22 +934,15 @@ async function shortcutDialog() {
         </div>
         <p class="fin-muted">A chave só serve para lançar gastos e recebimentos; com ela não dá para ver nada das suas finanças. Não compartilhe.</p>
 
-        <h3>Montar o atalho "Lançar gasto"</h3>
+        <h3>Jeito fácil: pedir para a IA do app Atalhos</h3>
+        <p>Se ao tocar em <b>+</b> no app Atalhos abrir uma conversa com a IA, copie o texto abaixo e cole lá.${st.token ? ' O texto já vem com a sua chave.' : html` Dica: toque em <b>${st.info.active ? 'Gerar nova chave' : 'Gerar chave'}</b> acima antes de copiar, assim o texto já vem com a chave.`}</p>
+        <div class="fin-code-row fin-prompt"><code>${aiPrompt}</code>${copyBtn(aiPrompt, 'Copiar texto')}</div>
+        <p class="fin-muted">Depois confira se o atalho ficou com estas 3 ações. Se a IA errar alguma coisa, dá para tocar na ação e corrigir à mão:</p>
         <ol class="fin-steps">
-          <li>Abra o app <b>Atalhos</b>, toque em <b>+</b> e dê o nome <b>Lançar gasto</b>.</li>
-          <li>Adicione a ação <b>Pedir Entrada</b>: tipo <b>Número</b>, pergunta <i>"Quanto?"</i>.</li>
-          <li>Adicione outra <b>Pedir Entrada</b>: tipo <b>Texto</b>, pergunta <i>"Com o quê?"</i>.</li>
-          <li>Adicione <b>Obter Conteúdo do URL</b>, cole o <b>endereço</b> acima e toque na seta para abrir as opções:
-            <ul>
-              <li>Método: <b>POST</b> · Corpo da Solicitação: <b>JSON</b></li>
-              <li>Adicione 4 campos do tipo Texto:<br>
-                <code>chave</code> → cole a sua chave<br>
-                <code>tipo</code> → <code>gasto</code><br>
-                <code>valor</code> → a variável <b>Entrada Fornecida</b> do "Quanto?"<br>
-                <code>descricao</code> → a variável <b>Entrada Fornecida</b> do "Com o quê?"</li>
-            </ul>
-          </li>
-          <li>Adicione <b>Mostrar Notificação</b> com a variável <b>Conteúdo do URL</b>. Ela confirma o que foi lançado.</li>
+          <li><b>Pedir Entrada</b> (Texto): <i>"Quanto e com o quê?"</i>. Você responde tudo junto, por exemplo <code>45,90 mercado</code>.</li>
+          <li><b>Obter Conteúdo do URL</b>: o <b>endereço</b> acima, método <b>POST</b>, corpo <b>JSON</b> com 3 campos de texto:<br>
+            <code>chave</code> → sua chave · <code>tipo</code> → <code>gasto</code> · <code>texto</code> → <b>Entrada Fornecida</b></li>
+          <li><b>Mostrar Notificação</b> com <b>Conteúdo do URL</b>. Ela confirma o que foi lançado.</li>
         </ol>
         <p class="fin-muted">Para recebimentos, duplique o atalho, chame de <b>Lançar recebimento</b> e troque <code>gasto</code> por <code>recebimento</code>.</p>
 

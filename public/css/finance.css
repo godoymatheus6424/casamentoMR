@@ -779,3 +779,6 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
 .fin-more ul { padding-left: 18px; display: grid; gap: 3px; }
 .fin-empty-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 8px; }
 .fin-empty-actions .fin-btn { margin: 0; }
+.fin-prompt code { white-space: pre-wrap; font-size: 13px; line-height: 1.45; }
+.fin-prompt { grid-template-columns: 1fr; justify-items: start; gap: 8px; }
+.fin-prompt code { width: 100%; }
