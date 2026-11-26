@@ -443,13 +443,35 @@ function extrato() {
       <div><span class="fin-label">Resultado</span><b>${amt(inc - exp, { sign: true })}</b></div>
       <div><span class="fin-label">Despesas pendentes</span><b>${amt(pend)}</b></div>
     </div>
-    ${list.length ? html`<div class="fin-table">${tableHead()}<div class="fin-card fin-list">${[...days.entries()].map(([d, items]) => {
+    ${list.length ? html`<div class="fin-ext-days">${[...days.entries()].map(([d, items]) => {
       const net = sum(items, (e) => (e.kind === 'income' ? e.amount : e.kind === 'expense' ? -e.amount : 0));
       const raw0 = new Date(`${d}T12:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
       const label = d === todayISO() ? `Hoje, ${raw0}` : raw0.charAt(0).toUpperCase() + raw0.slice(1);
-      return html`<div class="fin-day-head"><span>${label}</span><span class="amt">${net ? `${net > 0 ? '+' : '−'} ${money(Math.abs(net))}` : ''}</span></div>${items.map((e) => entryRow(e, { table: true }))}`;
-    })}</div></div>` : emptyCard('list', q ? 'Nada encontrado' : 'Nenhum lançamento', q ? 'Tente outra busca.' : 'Use o botão + para lançar receitas, despesas e compras no cartão.')}
+      return html`<section class="fin-ext-day ${d === todayISO() ? 'today' : ''}">
+        <div class="fin-ext-day-head"><span>${label}</span><span class="amt">${net ? `${net > 0 ? '+' : '−'} ${money(Math.abs(net))}` : ''}</span></div>
+        <div class="fin-tx-grid">${items.map(entryCard)}</div>
+      </section>`;
+    })}</div>` : emptyCard('list', q ? 'Nada encontrado' : 'Nenhum lançamento', q ? 'Tente outra busca.' : 'Use o botão + para lançar receitas, despesas e compras no cartão.')}
   `;
+}
+// Card de um lançamento (extrato): categoria e situação no topo, descrição, detalhes e o valor em destaque.
+function entryCard(e) {
+  const c = e.kind === 'transfer' ? { emoji: '↔️', color: '#8E8E93', name: 'Transferência' } : categoryOf(e.src, e.categoryId);
+  const st = statusOf(e);
+  const where = e.card ? `💳 ${e.card.name}` : e.kind === 'transfer' ? '' : (e.src.items.accounts.find((a) => a.id === e.accountId)?.name || (e.owner === 'wedding' ? 'Casamento' : ''));
+  // Sem repetir o que já aparece no título (ex.: "Uber" na descrição e no estabelecimento).
+  const party = e.party && !norm(e.description || '').includes(norm(e.party)) ? e.party : '';
+  const details = [party, e.installments && `parcela ${e.installment}/${e.installments}`, e.shareLabel].filter(Boolean).join(' · ');
+  const statusEl = canToggle(e)
+    ? html`<button type="button" class="fin-pill fin-pill-btn ${st.cls}" data-act="toggle-paid" data-id="${e.id}" data-month="${e.month || ''}" title="${e.paid ? 'Marcar como pendente' : e.kind === 'income' ? 'Marcar como recebido' : 'Marcar como pago'}">${e.paid ? '✓ ' : ''}${st.label}</button>`
+    : html`<span class="fin-pill ${st.cls}">${st.label}</span>`;
+  return html`<div class="fin-tx-card ${e.kind} ${st.cls === 'red' ? 'late' : ''}" role="button" tabindex="0" data-act="entry" data-id="${e.id}" data-month="${e.month || ''}" style="--c:${c.color || '#8E8E93'}">
+    <div class="fin-tx-top">${bubble(c, 'sm')}<span class="fin-tx-icons">${e.recurringId || e.rec ? html`<span class="fin-mini" title="Fixo">${icon('repeat')}</span>` : ''}${e.attachments?.length ? html`<span class="fin-mini" title="Tem comprovante">${icon('clip')}</span>` : ''}${ownerTag(e.owner)}</span>${statusEl}</div>
+    <div class="fin-tx-title">${e.description || c.name}</div>
+    <div class="fin-tx-meta">${[...new Set([c.name, where].filter(Boolean))].join(' · ')}</div>
+    ${details ? html`<div class="fin-tx-meta">${details}</div>` : ''}
+    <div class="fin-tx-amt ${e.kind}">${amt(e.amount, { sign: true, kind: e.kind })}</div>
+  </div>`;
 }
 function exportCSV() {
   const rows = [['Data', 'Tipo', 'Descrição', 'Categoria', 'Conta/Cartão', 'De onde vem / Para onde vai', 'Valor', 'Situação', 'Parcela', 'Observações']];
@@ -836,6 +858,7 @@ function ajustes() {
       </div>
     </section>
     <p class="fin-foot">Família e assessoria do casamento não têm acesso às finanças.</p>
+    <p class="fin-foot fin-version">Versão do site: <b>${state.status?.build || '—'}</b>${state.status?.startedAt ? html` · no ar desde ${new Date(state.status.startedAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}</p>
     </div>
   `;
 }

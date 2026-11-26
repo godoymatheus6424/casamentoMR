@@ -692,3 +692,32 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
 .fin-inv-pay { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--ink-2); }
 .fin-inv-pay span { flex: 1; min-width: 0; }
 .fin-inv-pay .btn-icon { color: var(--muted); }
+/* Extrato em cards: um bloco por dia, com os lançamentos lado a lado */
+.fin-ext-days { display: grid; gap: 14px; }
+.fin-ext-day-head { display: flex; justify-content: space-between; gap: 10px; padding: 4px 6px 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.fin-ext-day.today .fin-ext-day-head > span:first-child { color: var(--f-blue); }
+.fin-tx-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.fin-tx-card {
+  position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 12px 12px 14px; border-radius: 20px; cursor: pointer; overflow: hidden;
+  background: var(--f-glass); -webkit-backdrop-filter: var(--f-blur); backdrop-filter: var(--f-blur);
+  border: 1px solid var(--f-glass-border); box-shadow: var(--f-glass-shadow); transition: transform .12s, box-shadow .2s;
+}
+.fin-tx-card::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 0 3px 3px 0; background: var(--c); opacity: .7; }
+.fin-tx-card:hover { box-shadow: var(--f-glass-shadow), 0 0 0 2px rgba(0, 122, 255, .18); }
+.fin-tx-card:active { transform: scale(.98); }
+.fin-tx-card:focus-visible { outline: 2px solid var(--f-blue); outline-offset: 2px; }
+.fin-tx-card.late { background: rgba(255, 59, 48, .06); }
+.fin-tx-top { display: flex; align-items: center; gap: 6px; min-width: 0; margin-bottom: 4px; }
+.fin-tx-icons { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; }
+.fin-tx-top .fin-pill { flex: none; font-size: 11px; padding: 2px 7px; }
+.fin-tx-title { font-size: 15px; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.fin-tx-meta { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-tx-amt { margin-top: auto; padding-top: 6px; font-size: 17px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+.fin-tx-amt.income { color: var(--f-green-text); }
+.fin-tx-amt.transfer { color: var(--muted); }
+@media (min-width: 640px) { .fin-tx-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; } }
+@media (min-width: 1024px) {
+  .fin-ext-days { gap: 18px; }
+  .fin-tx-card { padding: 14px 14px 14px 16px; }
+  .fin-tx-amt { font-size: 19px; }
+}

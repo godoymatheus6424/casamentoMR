@@ -240,7 +240,22 @@ window.addEventListener('auth:expired', () => {
 // Telas de acesso também respondem ao endereço (#/cadastro, #/esqueci, #/redefinir…)
 window.addEventListener('hashchange', () => { if (!state.user && state.status) renderAuth(); });
 
+// Versão nova publicada com a página aberta: avisa para recarregar (o código da tela é o antigo).
+let updateShown = false;
+function checkNewVersion() {
+  api('GET', '/api/status').then((s) => {
+    if (updateShown || !s?.build || !state.status?.build || s.build === state.status.build) return;
+    updateShown = true;
+    const bar = document.createElement('div');
+    bar.className = 'update-bar';
+    bar.innerHTML = '<span>Há uma versão nova do site.</span><button type="button">Atualizar agora</button>';
+    bar.querySelector('button').onclick = () => location.reload();
+    document.body.append(bar);
+  }).catch(() => {});
+}
+setInterval(() => { if (document.visibilityState === 'visible') checkNewVersion(); }, 10 * 60e3);
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') checkNewVersion();
   if (document.visibilityState === 'visible' && state.user && Date.now() - state.loadedAt > 60e3) {
     refreshMe().then(loadAll).then(() => (fin.loaded && isFinHash() ? loadFin() : null)).catch(() => {});
   }

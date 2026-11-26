@@ -108,6 +108,22 @@ const STATIC_MIME = {
   '.webmanifest': 'application/manifest+json',
 };
 
+// Versão em execução: impressão digital do código (muda a cada atualização publicada) e hora em que o
+// servidor subiu. Aparece em Finanças › Ajustes e avisa a página aberta quando há versão nova.
+const BUILD = (() => {
+  const h = crypto.createHash('sha256');
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(js|css|html)$/.test(e.name)) h.update(e.name).update(fs.readFileSync(p));
+    }
+  };
+  try { walk(PUBLIC_DIR); h.update(fs.readFileSync(path.join(ROOT, 'server.js'))); } catch { /* ignora */ }
+  return h.digest('hex').slice(0, 7);
+})();
+const STARTED_AT = Date.now();
+
 // ---------------------------------------------------------------------------
 // Banco de dados
 // ---------------------------------------------------------------------------
@@ -513,6 +529,8 @@ route('GET', '/api/status', ({ res }) => {
     signupOpen: SIGNUP_OPEN,
     google: !!GOOGLE,
     maxUploadMb: MAX_UPLOAD_MB,
+    build: BUILD,
+    startedAt: STARTED_AT,
     trialDays: TRIAL_DAYS,
     pricing: PRICING,
   });
