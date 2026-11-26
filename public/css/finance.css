@@ -698,7 +698,7 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
 .fin-ext-day-head.today > span:first-child { color: var(--f-blue); }
 .fin-ext-day-head .amt.pos { color: var(--f-green-text); }
 /* Fita de dias (agenda): rola de lado; pontinho verde = entrada, cinza = gasto, vermelho = atrasado */
-.fin-dstrip-wrap { display: flex; align-items: stretch; gap: 6px; margin: 2px 0 12px; }
+.fin-dstrip-wrap { display: flex; align-items: stretch; gap: 8px; margin: 6px 0 14px; }
 .fin-dstrip { position: relative; flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; padding: 3px; border-radius: 18px;
   background: var(--f-glass); -webkit-backdrop-filter: var(--f-blur); backdrop-filter: var(--f-blur); border: 1px solid var(--f-glass-border); box-shadow: var(--f-glass-shadow); }
 .fin-dstrip::-webkit-scrollbar { display: none; }
@@ -715,18 +715,19 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
 .fin-dday.empty:not(.on):not(.today) strong { color: #aeaeb2; font-weight: 600; }
 .fin-dday:hover:not(.on) { background: rgba(118, 118, 128, .1); }
 .fin-dday.today:not(.on) strong, .fin-dday.today:not(.on) small { color: var(--f-blue); }
-.fin-dday.on { background: var(--ink); color: #fff; box-shadow: 0 4px 10px rgba(0, 0, 0, .18); }
-.fin-dday.on small { color: rgba(255, 255, 255, .75); }
+/* Dia escolhido: bolha de vidro mais clara e elevada, como o controle segmentado */
+.fin-dday.on { background: rgba(255, 255, 255, .92); color: var(--ink); box-shadow: 0 1px 0 rgba(255, 255, 255, .9) inset, 0 4px 12px rgba(31, 38, 64, .12), 0 0 0 1px rgba(0, 122, 255, .18); }
+.fin-dday.on small { color: var(--f-blue); }
+.fin-dday.on.today strong { color: var(--f-blue); }
 .fin-dday-dots { display: flex; gap: 3px; height: 5px; }
 .fin-dday-dots i { width: 5px; height: 5px; border-radius: 50%; background: #8e8e93; }
 .fin-dday-dots i.inc { background: var(--f-green); }
 .fin-dday-dots i.late { background: var(--f-red); }
-.fin-dday.on .fin-dday-dots i.exp { background: rgba(255, 255, 255, .8); }
 .fin-dstrip-all { width: 58px; padding: 6px 0; font-size: 14px; font-weight: 700;
   background: var(--f-glass); -webkit-backdrop-filter: var(--f-blur); backdrop-filter: var(--f-blur); border: 1px solid var(--f-glass-border); box-shadow: var(--f-glass-shadow); border-radius: 18px; }
 .fin-dstrip-all small { font-size: 11px; font-weight: 600; color: var(--muted); }
-.fin-dstrip-all.on { background: var(--ink); color: #fff; border-color: var(--ink); }
-.fin-dstrip-all.on small { color: rgba(255, 255, 255, .75); }
+.fin-dstrip-all.on { background: rgba(255, 255, 255, .92); color: var(--f-blue); box-shadow: 0 1px 0 rgba(255, 255, 255, .9) inset, 0 4px 12px rgba(31, 38, 64, .12), 0 0 0 1px rgba(0, 122, 255, .18); }
+.fin-dstrip-all.on small { color: var(--f-blue); opacity: .8; }
 .fin-dday:focus-visible, .fin-dstrip-all:focus-visible { outline: 2px solid var(--f-blue); outline-offset: -2px; }
 .fin-tx-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .fin-tx-card {
@@ -751,6 +752,7 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
 @media (min-width: 1024px) {
   .fin-ext-days { gap: 22px; }
   .fin-dday { width: auto; min-width: 40px; flex: 1 0 40px; }
+  .fin-dstrip-wrap { margin: 14px 0 16px; }
   .fin-tx-card { padding: 14px 14px 14px 16px; }
   .fin-tx-amt { font-size: 19px; }
 }
