@@ -14,7 +14,7 @@ import { state } from '../store.js';
 import { names } from '../domain.js';
 import { html, icon, raw, money, fmtDate, todayISO, shiftISO, sum, norm, run, downloadCSV, csvMoney, toast, openModal } from '../ui.js';
 
-export const ui = { month: thisMonth(), day: '', wday: '', ext: 'tudo', q: '', plan: 'fixos', catKind: 'expense', cardKey: '', cardId: '' };
+export const ui = { month: thisMonth(), day: '', wday: '', extDay: '', ext: 'tudo', q: '', plan: 'fixos', catKind: 'expense', cardKey: '', cardId: '' };
 
 // ---------------------------------------------------------------------------
 // Peças
@@ -428,45 +428,59 @@ function extrato() {
   const inc = sum(list.filter((e) => e.kind === 'income'), (e) => e.amount);
   const exp = sum(list.filter((e) => e.kind === 'expense'), (e) => e.amount);
   const pend = sum(list.filter((e) => !e.paid && !e.card && e.kind === 'expense'), (e) => e.amount);
+  const shown = ui.extDay && monthOf(ui.extDay) === ui.month ? list.filter((e) => e.date === ui.extDay) : list;
   const days = new Map();
-  for (const e of [...list].reverse()) { if (!days.has(e.date)) days.set(e.date, []); days.get(e.date).push(e); }
+  for (const e of [...shown].reverse()) { if (!days.has(e.date)) days.set(e.date, []); days.get(e.date).push(e); }
   const count = (k) => all.filter(EXT_FILTERS[k]).length;
+  const dayHead = (d, items) => {
+    const net = sum(items, (e) => (e.kind === 'income' ? e.amount : e.kind === 'expense' ? -e.amount : 0));
+    const raw0 = new Date(`${d}T12:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+    const label = d === todayISO() ? `Hoje, ${raw0}` : raw0.charAt(0).toUpperCase() + raw0.slice(1);
+    return html`<div class="fin-ext-day-head ${d === todayISO() ? 'today' : ''}"><span>${label}</span><span class="amt ${net > 0 ? 'pos' : ''}">${net ? `${net > 0 ? '+' : '−'} ${money(Math.abs(net))}` : ''}</span></div>`;
+  };
   return html`
     ${pageHead('Extrato', { month: true, actions: html`<button type="button" class="fin-round" data-act="export" title="Exportar planilha" aria-label="Exportar planilha">${icon('download')}</button>` })}
     <div class="fin-toolbar">
       <label class="fin-search">${icon('search')}<input type="search" id="fin-q" value="${ui.q}" placeholder="Buscar descrição, categoria, loja…" autocomplete="off" enterkeyhint="search"></label>
       <div class="fin-chips">${[['tudo', 'Tudo'], ['receitas', 'Receitas'], ['despesas', 'Despesas'], ['pendentes', 'Pendentes'], ['cartao', 'Cartão']].map(([k, l]) => html`<button type="button" class="fin-chip ${ui.ext === k ? 'on' : ''}" data-act="ext-filter" data-v="${k}">${l}<span>${count(k)}</span></button>`)}</div>
     </div>
+    ${dayStrip(list)}
     <div class="fin-ext-sum">
       <div><span class="fin-label">Entradas</span><b class="pos">${amt(inc)}</b></div>
       <div><span class="fin-label">Saídas</span><b class="neg">${amt(exp)}</b></div>
       <div><span class="fin-label">Resultado</span><b>${amt(inc - exp, { sign: true })}</b></div>
       <div><span class="fin-label">Despesas pendentes</span><b>${amt(pend)}</b></div>
     </div>
-    ${list.length ? html`<div class="fin-ext-days">${[...days.entries()].map(([d, items]) => {
-      const net = sum(items, (e) => (e.kind === 'income' ? e.amount : e.kind === 'expense' ? -e.amount : 0));
-      const dt = new Date(`${d}T12:00`);
-      const wd = dt.toLocaleDateString('pt-BR', { weekday: 'long' });
-      const isToday = d === todayISO();
-      const when = isToday ? 'Hoje' : d === shiftISO(todayISO(), { d: -1 }) ? 'Ontem' : d === shiftISO(todayISO(), { d: 1 }) ? 'Amanhã' : wd.charAt(0).toUpperCase() + wd.slice(1);
-      const netEl = net ? html`<span class="amt ${net > 0 ? 'pos' : ''}">${net > 0 ? '+' : '−'} ${money(Math.abs(net))}</span>` : '';
-      return html`<section class="fin-ext-day ${isToday ? 'today' : d > todayISO() ? 'future' : ''}">
-        <div class="fin-ext-day-side">
-          <div class="fin-cal-page" aria-hidden="true">
-            <span class="fin-cal-band">${dt.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '')}</span>
-            <strong>${dt.getDate()}</strong>
-            <small>${dt.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')}</small>
-          </div>
-          <div class="fin-ext-day-info">
-            <b>${when}</b>
-            <span>${items.length} ${items.length === 1 ? 'lançamento' : 'lançamentos'}</span>
-            ${netEl}
-          </div>
-        </div>
-        <div class="fin-tx-grid" aria-label="${fmtDate(d)}">${items.map(entryCard)}</div>
-      </section>`;
-    })}</div>` : emptyCard('list', q ? 'Nada encontrado' : 'Nenhum lançamento', q ? 'Tente outra busca.' : 'Use o botão + para lançar receitas, despesas e compras no cartão.')}
+    ${shown.length ? html`<div class="fin-ext-days">${[...days.entries()].map(([d, items]) => html`<section class="fin-ext-day">${dayHead(d, items)}<div class="fin-tx-grid">${items.map(entryCard)}</div></section>`)}</div>`
+      : ui.extDay ? html`<div class="fin-card fin-empty small"><p>Nada ${q || ui.ext !== 'tudo' ? 'com esse filtro ' : ''}em ${fmtDate(ui.extDay, { day: 'numeric', month: 'long' })}.</p><button type="button" class="fin-btn ghost" data-act="ext-day" data-v="">Ver o mês todo</button></div>`
+      : emptyCard('list', q ? 'Nada encontrado' : 'Nenhum lançamento', q ? 'Tente outra busca.' : 'Use o botão + para lançar receitas, despesas e compras no cartão.')}
   `;
+}
+// Fita com os dias do mês (como uma agenda): pontinhos mostram o que há em cada dia; tocar filtra o dia.
+function dayStrip(list) {
+  const [y, m] = ui.month.split('-').map(Number);
+  const last = new Date(y, m, 0).getDate();
+  const today = todayISO();
+  const sel = ui.extDay && monthOf(ui.extDay) === ui.month ? ui.extDay : '';
+  const byDay = new Map();
+  for (const e of list) { if (!byDay.has(e.date)) byDay.set(e.date, []); byDay.get(e.date).push(e); }
+  const days = Array.from({ length: last }, (_, i) => `${ui.month}-${String(i + 1).padStart(2, '0')}`);
+  return html`<div class="fin-dstrip-wrap">
+    <button type="button" class="fin-dstrip-all ${sel ? '' : 'on'}" data-act="ext-day" data-v="">Mês<small>todo</small></button>
+    <div class="fin-dstrip" role="group" aria-label="Dias de ${monthLabel(ui.month)}">
+      ${days.map((d) => {
+        const items = byDay.get(d) || [];
+        const inc = items.some((e) => e.kind === 'income');
+        const late = items.some((e) => statusOf(e).cls === 'red');
+        const exp = items.some((e) => e.kind === 'expense' || e.kind === 'transfer');
+        const wd = new Date(`${d}T12:00`).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').slice(0, 3);
+        return html`<button type="button" class="fin-dday ${d === sel ? 'on' : ''} ${d === today ? 'today' : ''} ${items.length ? '' : 'empty'} ${d < today ? 'past' : ''}" data-act="ext-day" data-v="${d === sel ? '' : d}" aria-pressed="${d === sel ? 'true' : 'false'}" title="${fmtDate(d)}${items.length ? ` · ${items.length} ${items.length === 1 ? 'lançamento' : 'lançamentos'}` : ''}">
+          <small>${wd}</small><strong>${Number(d.slice(8))}</strong>
+          <span class="fin-dday-dots">${inc ? html`<i class="inc"></i>` : ''}${late ? html`<i class="late"></i>` : exp ? html`<i class="exp"></i>` : ''}</span>
+        </button>`;
+      })}
+    </div>
+  </div>`;
 }
 // Card de um lançamento (extrato): categoria e situação no topo, descrição, detalhes e o valor em destaque.
 function entryCard(e) {
@@ -927,6 +941,10 @@ function togglePaid(e) {
 }
 
 export function mountFin(el, emitView) {
+  // Fita de dias do extrato: deixa o dia escolhido (ou hoje) no meio.
+  const strip = el.querySelector('.fin-dstrip');
+  const focusDay = strip && (strip.querySelector('.fin-dday.on') || strip.querySelector('.fin-dday.today'));
+  if (focusDay) strip.scrollLeft = focusDay.offsetLeft - strip.clientWidth / 2 + focusDay.offsetWidth / 2;
   el.onclick = (ev) => {
     const a = ev.target.closest('[data-act]');
     if (!a || !el.contains(a)) return;
@@ -935,11 +953,12 @@ export function mountFin(el, emitView) {
     switch (act) {
       case 'hide': toggleHidden(); break;
       case 'scope': setScope(a.dataset.v); break;
-      case 'month': ui.month = addMonths(ui.month, Number(a.dataset.d)); ui.day = ''; emitView(); break;
-      case 'month-today': ui.month = thisMonth(); ui.day = ''; emitView(); break;
-      case 'goto-month': ui.month = a.dataset.v; ui.day = ''; emitView(); break;
+      case 'month': ui.month = addMonths(ui.month, Number(a.dataset.d)); ui.day = ''; ui.extDay = ''; emitView(); break;
+      case 'month-today': ui.month = thisMonth(); ui.day = ''; ui.extDay = ''; emitView(); break;
+      case 'goto-month': ui.month = a.dataset.v; ui.day = ''; ui.extDay = ''; emitView(); break;
       case 'seg': if (a.dataset.group === 'plan') ui.plan = a.dataset.v; else if (a.dataset.group === 'cat') ui.catKind = a.dataset.v; emitView(); break;
       case 'seg-plan': ui.plan = a.dataset.v; break; // o link segue para #/fin/planejar
+      case 'ext-day': ui.extDay = a.dataset.v; emitView(); break;
       case 'ext-filter': ui.ext = a.dataset.v; if (location.hash.startsWith('#/fin/extrato')) emitView(); break;
       case 'entry': openEntry(findEntry(id, a.dataset.month)); break;
       case 'toggle-paid': togglePaid(findEntry(id, a.dataset.month)); break;

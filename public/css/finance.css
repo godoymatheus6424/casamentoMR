@@ -694,30 +694,40 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
 .fin-inv-pay .btn-icon { color: var(--muted); }
 /* Extrato em cards: um bloco por dia, com os lançamentos lado a lado */
 .fin-ext-days { display: grid; gap: 14px; }
-/* Cada dia é uma folhinha de calendário de mesa: faixa com o mês, número grande, dia da semana */
-.fin-ext-day-side { display: flex; align-items: center; gap: 12px; padding: 0 4px 10px; }
-.fin-cal-page {
-  position: relative; flex: none; width: 54px; display: grid; justify-items: center; padding-bottom: 5px; border-radius: 13px; overflow: visible;
-  background: #fff; border: 1px solid rgba(0, 0, 0, .06); box-shadow: 0 6px 16px rgba(31, 38, 64, .09), 0 1px 2px rgba(31, 38, 64, .06);
+.fin-ext-day-head { display: flex; justify-content: space-between; gap: 10px; padding: 4px 6px 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.fin-ext-day-head.today > span:first-child { color: var(--f-blue); }
+.fin-ext-day-head .amt.pos { color: var(--f-green-text); }
+/* Fita de dias (agenda): rola de lado; pontinho verde = entrada, cinza = gasto, vermelho = atrasado */
+.fin-dstrip-wrap { display: flex; align-items: stretch; gap: 6px; margin: 2px 0 12px; }
+.fin-dstrip { position: relative; flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; padding: 3px; border-radius: 18px;
+  background: var(--f-glass); -webkit-backdrop-filter: var(--f-blur); backdrop-filter: var(--f-blur); border: 1px solid var(--f-glass-border); box-shadow: var(--f-glass-shadow); }
+.fin-dstrip::-webkit-scrollbar { display: none; }
+.fin-dstrip > * { position: relative; }
+.fin-dstrip { -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%); mask-image: linear-gradient(90deg, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%); }
+.fin-dday, .fin-dstrip-all {
+  flex: none; display: grid; justify-items: center; align-content: center; gap: 1px; border: 0; background: transparent; color: var(--ink); cursor: pointer;
+  font-family: var(--sans); border-radius: 14px; transition: background .15s, color .15s;
 }
-/* argolas do bloco */
-.fin-cal-page::before, .fin-cal-page::after {
-  content: ""; position: absolute; top: -4px; width: 5px; height: 10px; border-radius: 3px; background: #c7c7cc; box-shadow: 0 1px 0 rgba(255, 255, 255, .8);
-}
-.fin-cal-page::before { left: 14px; } .fin-cal-page::after { right: 14px; }
-.fin-cal-band { width: 100%; padding: 5px 0 3px; border-radius: 12px 12px 0 0; background: var(--f-red); color: #fff; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; text-align: center; }
-.fin-cal-page strong { font-size: 24px; font-weight: 700; line-height: 1.05; margin-top: 2px; font-variant-numeric: tabular-nums; }
-.fin-cal-page small { font-size: 10.5px; font-weight: 600; color: var(--muted); text-transform: lowercase; line-height: 1.1; }
-.fin-ext-day.today .fin-cal-band { background: var(--f-blue); }
-.fin-ext-day.today .fin-cal-page { box-shadow: 0 0 0 3px rgba(0, 122, 255, .22), 0 6px 16px rgba(31, 38, 64, .09); }
-.fin-ext-day.future .fin-cal-page { background: rgba(255, 255, 255, .7); }
-.fin-ext-day.future .fin-cal-band { background: #8e8e93; }
-.fin-ext-day-info { flex: 1; min-width: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; }
-.fin-ext-day-info b { font-size: 17px; font-weight: 700; }
-.fin-ext-day.today .fin-ext-day-info b { color: var(--f-blue); }
-.fin-ext-day-info > span:not(.amt) { font-size: 13px; color: var(--muted); }
-.fin-ext-day-info .amt { margin-left: auto; font-size: 14px; font-weight: 600; color: var(--ink-2); }
-.fin-ext-day-info .amt.pos { color: var(--f-green-text); }
+.fin-dday { width: 44px; padding: 6px 0 5px; scroll-snap-align: center; }
+.fin-dday small { font-size: 10.5px; font-weight: 600; color: var(--muted); text-transform: lowercase; }
+.fin-dday strong { font-size: 18px; font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.fin-dday.past:not(.on) strong { color: var(--ink-2); }
+.fin-dday.empty:not(.on):not(.today) strong { color: #aeaeb2; font-weight: 600; }
+.fin-dday:hover:not(.on) { background: rgba(118, 118, 128, .1); }
+.fin-dday.today:not(.on) strong, .fin-dday.today:not(.on) small { color: var(--f-blue); }
+.fin-dday.on { background: var(--ink); color: #fff; box-shadow: 0 4px 10px rgba(0, 0, 0, .18); }
+.fin-dday.on small { color: rgba(255, 255, 255, .75); }
+.fin-dday-dots { display: flex; gap: 3px; height: 5px; }
+.fin-dday-dots i { width: 5px; height: 5px; border-radius: 50%; background: #8e8e93; }
+.fin-dday-dots i.inc { background: var(--f-green); }
+.fin-dday-dots i.late { background: var(--f-red); }
+.fin-dday.on .fin-dday-dots i.exp { background: rgba(255, 255, 255, .8); }
+.fin-dstrip-all { width: 58px; padding: 6px 0; font-size: 14px; font-weight: 700;
+  background: var(--f-glass); -webkit-backdrop-filter: var(--f-blur); backdrop-filter: var(--f-blur); border: 1px solid var(--f-glass-border); box-shadow: var(--f-glass-shadow); border-radius: 18px; }
+.fin-dstrip-all small { font-size: 11px; font-weight: 600; color: var(--muted); }
+.fin-dstrip-all.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.fin-dstrip-all.on small { color: rgba(255, 255, 255, .75); }
+.fin-dday:focus-visible, .fin-dstrip-all:focus-visible { outline: 2px solid var(--f-blue); outline-offset: -2px; }
 .fin-tx-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .fin-tx-card {
   position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 12px 12px 14px; border-radius: 20px; cursor: pointer; overflow: hidden;
@@ -740,18 +750,7 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
 @media (min-width: 640px) { .fin-tx-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; } }
 @media (min-width: 1024px) {
   .fin-ext-days { gap: 22px; }
-  /* No computador a folhinha fica numa coluna à esquerda e acompanha a rolagem do dia */
-  .fin-ext-day { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 18px; align-items: start; }
-  .fin-ext-day-side { position: sticky; top: 18px; flex-direction: column; align-items: center; gap: 8px; padding: 4px 0 0; text-align: center; }
-  .fin-cal-page { width: 72px; border-radius: 16px; padding-bottom: 7px; }
-  .fin-cal-band { border-radius: 15px 15px 0 0; font-size: 12px; padding: 6px 0 4px; }
-  .fin-cal-page strong { font-size: 32px; }
-  .fin-cal-page small { font-size: 12px; }
-  .fin-cal-page::before { left: 19px; } .fin-cal-page::after { right: 19px; }
-  .fin-ext-day-info { flex-direction: column; align-items: center; gap: 1px; }
-  .fin-ext-day-info b { font-size: 14px; }
-  .fin-ext-day-info > span:not(.amt) { font-size: 12px; }
-  .fin-ext-day-info .amt { margin: 2px 0 0; font-size: 13px; }
+  .fin-dday { width: auto; min-width: 40px; flex: 1 0 40px; }
   .fin-tx-card { padding: 14px 14px 14px 16px; }
   .fin-tx-amt { font-size: 19px; }
 }
