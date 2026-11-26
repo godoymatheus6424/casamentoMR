@@ -324,9 +324,9 @@ function home() {
   const monthName = dt.toLocaleDateString('pt-BR', { month: 'long' });
   const selLabel = ui.wday === today ? 'Hoje' : (() => { const t = new Date(`${ui.wday}T12:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }); return t.charAt(0).toUpperCase() + t.slice(1); })();
 
-  // Comprometido: o que já tem destino. Faturas em aberto dos cartões (inclui parcelas futuras) + contas ainda
-  // não pagas deste mês (fora as faturas, que já estão na conta dos cartões).
-  const cardsOpen = sum(sources(), (src) => sum(src.items.cards, (c) => cardUsed(src, c)));
+  // Comprometido no mês: só o que vence neste mês. Faturas dos cartões que vencem agora (o que falta pagar delas)
+  // + contas ainda não pagas do mês. Parcelas de faturas futuras ficam de fora.
+  const cardsOpen = sum(sources(), (src) => sum(src.items.cards, (c) => invoiceStatus(src, c, now).left));
   const billsLeft = sum(monthEntries(now).filter((e) => e.kind === 'expense' && !e.paid && !e.card && !e.invoiceOf), (e) => e.amount);
   const committed = cardsOpen + billsLeft;
   const free = bal - committed;
@@ -404,13 +404,13 @@ function home() {
                 <span class="fin-label">Em conta</span>
                 <strong class="amt-big ${bal < 0 ? 'neg' : ''}">${amt(bal)}</strong>
               </button>
-              <div class="fin-p-bar" role="img" aria-label="Do saldo, ${money(committed)} já está comprometido">
+              <div class="fin-p-bar" role="img" aria-label="Do saldo, ${money(committed)} já está comprometido em ${monthName}">
                 <span class="cards" style="width:${pct(cardsOpen)}%"></span><span class="bills" style="width:${pct(Math.min(billsLeft, Math.max(0, bal - cardsOpen)))}%"></span>
               </div>
               <div class="fin-p-split">
-                <div><span class="fin-label">Comprometido</span><b>${amt(committed)}</b>
-                  <small>${cardsOpen ? html`<i class="dot cards"></i>cartões ${amt(cardsOpen)}` : ''}${cardsOpen && billsLeft ? html`<br>` : ''}${billsLeft ? html`<i class="dot bills"></i>contas do mês ${amt(billsLeft)}` : ''}${!committed ? 'nada a pagar' : ''}</small></div>
-                <div><span class="fin-label">Livre</span><b class="${free < 0 ? 'neg' : 'pos'}">${amt(free)}</b><small>depois de pagar tudo</small></div>
+                <div><span class="fin-label">Comprometido em ${monthName}</span><b>${amt(committed)}</b>
+                  <small>${cardsOpen ? html`<i class="dot cards"></i>faturas ${amt(cardsOpen)}` : ''}${cardsOpen && billsLeft ? html`<br>` : ''}${billsLeft ? html`<i class="dot bills"></i>contas ${amt(billsLeft)}` : ''}${!committed ? 'nada a pagar este mês' : ''}</small></div>
+                <div><span class="fin-label">Livre em ${monthName}</span><b class="${free < 0 ? 'neg' : 'pos'}">${amt(free)}</b><small>depois de pagar o mês</small></div>
               </div>
               ${late.length ? html`<button type="button" class="fin-p-alert" data-act="older">⚠️ ${late.length === 1 ? '1 conta atrasada' : `${late.length} contas atrasadas`} · ${amt(sum(late, (e) => e.amount))}</button>` : ''}
             </div>
