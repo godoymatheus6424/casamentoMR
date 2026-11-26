@@ -8,7 +8,7 @@ import {
 } from './model.js';
 import {
   txForm, recurringForm, confirmOccurrence, markPaid, accountForm, cardForm, payInvoiceForm, removeInvoicePayment, categoryForm,
-  goalForm, goalDepositForm, entryInfo, adjustBalanceForm, dailyBudgetForm,
+  goalForm, goalDepositForm, entryInfo, adjustBalanceForm, dailyBudgetForm, addSheet,
 } from './forms.js';
 import { state } from '../store.js';
 import { api } from '../api.js';
@@ -453,7 +453,13 @@ function extrato() {
       <div><span class="fin-label">Despesas pendentes</span><b>${amt(pend)}</b></div>
     </div>
     ${shown.length ? html`<div class="fin-ext-days">${[...days.entries()].map(([d, items]) => html`<section class="fin-ext-day">${dayHead(d, items)}<div class="fin-tx-grid">${items.map(entryCard)}</div></section>`)}</div>`
-      : ui.extDay ? html`<div class="fin-card fin-empty small"><p>Nada ${q || ui.ext !== 'tudo' ? 'com esse filtro ' : ''}em ${fmtDate(ui.extDay, { day: 'numeric', month: 'long' })}.</p><button type="button" class="fin-btn ghost" data-act="ext-day" data-v="">Ver o mês todo</button></div>`
+      : ui.extDay ? html`<div class="fin-card fin-empty small">
+          <p>${q || ui.ext !== 'tudo' ? 'Nada com esse filtro' : 'Nada lançado'} ${ui.extDay === todayISO() ? 'hoje' : `em ${fmtDate(ui.extDay, { day: 'numeric', month: 'long' })}`}.</p>
+          <div class="fin-empty-actions">
+            ${ui.extDay === todayISO() ? html`<button type="button" class="fin-btn" data-act="ext-add">${icon('plus')}Lançar</button>` : ''}
+            <button type="button" class="fin-btn ghost" data-act="ext-day" data-v="">Ver o mês todo</button>
+          </div>
+        </div>`
       : emptyCard('list', q ? 'Nada encontrado' : 'Nenhum lançamento', q ? 'Tente outra busca.' : 'Use o botão + para lançar receitas, despesas e compras no cartão.')}
   `;
 }
@@ -990,7 +996,7 @@ async function shortcutDialog() {
 export const FIN_ROUTES = {
   '': { title: 'Início', tab: '', render: home },
   mes: { title: 'Visão geral do mês', tab: '', render: monthView },
-  extrato: { title: 'Extrato', tab: 'extrato', render: extrato },
+  extrato: { title: 'Extrato', tab: 'extrato', render: extrato, enter: () => { ui.month = thisMonth(); ui.extDay = todayISO(); } },
   planejar: { title: 'Planejar', tab: 'planejar', render: planejar },
   cartoes: { title: 'Cartões', tab: 'cartoes', render: cartoes },
   mais: { title: 'Mais', tab: 'mais', render: mais },
@@ -1052,6 +1058,7 @@ export function mountFin(el, emitView) {
       case 'seg': if (a.dataset.group === 'plan') ui.plan = a.dataset.v; else if (a.dataset.group === 'cat') ui.catKind = a.dataset.v; emitView(); break;
       case 'seg-plan': ui.plan = a.dataset.v; break; // o link segue para #/fin/planejar
       case 'ext-day': ui.extDay = a.dataset.v; emitView(); break;
+      case 'ext-add': addSheet(); break;
       case 'ext-filter': ui.ext = a.dataset.v; if (location.hash.startsWith('#/fin/extrato')) emitView(); break;
       case 'entry': openEntry(findEntry(id, a.dataset.month)); break;
       case 'toggle-paid': togglePaid(findEntry(id, a.dataset.month)); break;

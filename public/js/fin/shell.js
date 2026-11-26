@@ -94,6 +94,7 @@ export function renderFinView(navigated) {
   const id = finRoute();
   const r = FIN_ROUTES[id] || FIN_ROUTES[''];
   const routeId = FIN_ROUTES[id] ? id : '';
+  if (navigated) r.enter?.(); // ex.: o extrato sempre abre no dia de hoje
   document.querySelectorAll('[data-fin-tab]').forEach((a) => {
     const on = a.dataset.finTab === r.tab;
     a.classList.toggle('on', on);

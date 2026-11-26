@@ -777,3 +777,5 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
 .fin-more summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 .fin-more[open] summary { margin-bottom: 6px; }
 .fin-more ul { padding-left: 18px; display: grid; gap: 3px; }
+.fin-empty-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 8px; }
+.fin-empty-actions .fin-btn { margin: 0; }
