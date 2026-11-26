@@ -445,11 +445,25 @@ function extrato() {
     </div>
     ${list.length ? html`<div class="fin-ext-days">${[...days.entries()].map(([d, items]) => {
       const net = sum(items, (e) => (e.kind === 'income' ? e.amount : e.kind === 'expense' ? -e.amount : 0));
-      const raw0 = new Date(`${d}T12:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
-      const label = d === todayISO() ? `Hoje, ${raw0}` : raw0.charAt(0).toUpperCase() + raw0.slice(1);
-      return html`<section class="fin-ext-day ${d === todayISO() ? 'today' : ''}">
-        <div class="fin-ext-day-head"><span>${label}</span><span class="amt">${net ? `${net > 0 ? '+' : '−'} ${money(Math.abs(net))}` : ''}</span></div>
-        <div class="fin-tx-grid">${items.map(entryCard)}</div>
+      const dt = new Date(`${d}T12:00`);
+      const wd = dt.toLocaleDateString('pt-BR', { weekday: 'long' });
+      const isToday = d === todayISO();
+      const when = isToday ? 'Hoje' : d === shiftISO(todayISO(), { d: -1 }) ? 'Ontem' : d === shiftISO(todayISO(), { d: 1 }) ? 'Amanhã' : wd.charAt(0).toUpperCase() + wd.slice(1);
+      const netEl = net ? html`<span class="amt ${net > 0 ? 'pos' : ''}">${net > 0 ? '+' : '−'} ${money(Math.abs(net))}</span>` : '';
+      return html`<section class="fin-ext-day ${isToday ? 'today' : d > todayISO() ? 'future' : ''}">
+        <div class="fin-ext-day-side">
+          <div class="fin-cal-page" aria-hidden="true">
+            <span class="fin-cal-band">${dt.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '')}</span>
+            <strong>${dt.getDate()}</strong>
+            <small>${dt.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')}</small>
+          </div>
+          <div class="fin-ext-day-info">
+            <b>${when}</b>
+            <span>${items.length} ${items.length === 1 ? 'lançamento' : 'lançamentos'}</span>
+            ${netEl}
+          </div>
+        </div>
+        <div class="fin-tx-grid" aria-label="${fmtDate(d)}">${items.map(entryCard)}</div>
       </section>`;
     })}</div>` : emptyCard('list', q ? 'Nada encontrado' : 'Nenhum lançamento', q ? 'Tente outra busca.' : 'Use o botão + para lançar receitas, despesas e compras no cartão.')}
   `;
