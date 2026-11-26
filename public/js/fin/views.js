@@ -15,7 +15,7 @@ import { api } from '../api.js';
 import { names } from '../domain.js';
 import { html, icon, raw, money, fmtDate, todayISO, shiftISO, sum, norm, run, downloadCSV, csvMoney, toast, openModal } from '../ui.js';
 
-export const ui = { month: thisMonth(), day: '', wday: '', extDay: '', ext: 'tudo', q: '', plan: 'fixos', catKind: 'expense', cardKey: '', cardId: '' };
+export const ui = { month: thisMonth(), day: '', wday: '', extDay: '', homePage: 0, ext: 'tudo', q: '', plan: 'fixos', catKind: 'expense', cardKey: '', cardId: '' };
 
 // ---------------------------------------------------------------------------
 // Peças
@@ -272,7 +272,7 @@ const listNames = (items) => {
 };
 
 // Meia-lua do mês: enche do verde (começo) ao vermelho (fim), com o dia de hoje grande no centro.
-function monthGauge(dt, weekday, monthName) {
+function monthGauge(dt, weekday, monthName, gid = 'fin-month-grad') {
   const day = dt.getDate();
   const last = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
   const p = last > 1 ? (day - 1) / (last - 1) : 1;
@@ -286,11 +286,11 @@ function monthGauge(dt, weekday, monthName) {
   return html`<div class="fin-gauge" style="--knob:hsl(${hue} 75% 42%)">
     <div class="fin-gauge-arc">
     <svg viewBox="0 0 200 112" aria-hidden="true">
-      <defs><linearGradient id="fin-month-grad" x1="0" x2="1" y1="0" y2="0">
+      <defs><linearGradient id="${gid}" x1="0" x2="1" y1="0" y2="0">
         <stop offset="0" stop-color="#34C759"/><stop offset=".55" stop-color="#FFCC00"/><stop offset=".8" stop-color="#FF9500"/><stop offset="1" stop-color="#FF3B30"/>
       </linearGradient></defs>
       <path d="${arc}" fill="none" stroke="var(--f-track)" stroke-width="12" stroke-linecap="round"/>
-      <path d="${arc}" fill="none" stroke="url(#fin-month-grad)" stroke-width="12" stroke-linecap="round" pathLength="100" stroke-dasharray="${(p * 100).toFixed(2)} 100"/>
+      <path d="${arc}" fill="none" stroke="url(#${gid})" stroke-width="12" stroke-linecap="round" pathLength="100" stroke-dasharray="${(p * 100).toFixed(2)} 100"/>
       <circle cx="${kx}" cy="${ky}" r="9" fill="#fff" stroke="var(--knob)" stroke-width="4"/>
     </svg>
     <div class="fin-gauge-center"><strong>${day}</strong></div>
@@ -324,42 +324,53 @@ function home() {
   const monthName = dt.toLocaleDateString('pt-BR', { month: 'long' });
   const selLabel = ui.wday === today ? 'Hoje' : (() => { const t = new Date(`${ui.wday}T12:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }); return t.charAt(0).toUpperCase() + t.slice(1); })();
 
+  // Comprometido: o que já tem destino. Faturas em aberto dos cartões (inclui parcelas futuras) + contas ainda
+  // não pagas deste mês (fora as faturas, que já estão na conta dos cartões).
+  const cardsOpen = sum(sources(), (src) => sum(src.items.cards, (c) => cardUsed(src, c)));
+  const billsLeft = sum(monthEntries(now).filter((e) => e.kind === 'expense' && !e.paid && !e.card && !e.invoiceOf), (e) => e.amount);
+  const committed = cardsOpen + billsLeft;
+  const free = bal - committed;
+  const nextIn = [...map.entries()].filter(([d]) => d >= today).sort(([x], [y]) => x.localeCompare(y)).flatMap(([, items]) => items.filter((e) => !e.paid && e.kind === 'income'))[0];
+
+  const todayMsg = html`<div class="fin-today-msg">
+    <p class="big">${todayOut.length ? html`Hoje vence ${listNames(todayOut)}.` : 'Sem gastos programados para hoje.'}</p>
+    ${todayIn.length ? html`<p>💰 Hoje entra ${listNames(todayIn)}.</p>` : ''}
+    <p>${weekOut.length ? html`Nos próximos 7 dias saem <b>${amt(sum(weekOut, (e) => e.amount))}</b> em ${weekOut.length} ${weekOut.length === 1 ? 'conta' : 'contas'}.` : 'Semana tranquila: nada a pagar nos próximos 7 dias.'}</p>
+    ${late.length ? html`<p class="red">⚠️ ${late.length === 1 ? 'Tem 1 conta atrasada' : `Tem ${late.length} contas atrasadas`} (${amt(sum(late, (e) => e.amount))}). <button type="button" class="fin-link" data-act="older">Resolver</button></p>` : ''}
+  </div>`;
+  const weekStrip = html`<div class="fin-week-strip">${week.map((d) => {
+    const items = map.get(d) || [];
+    const out = items.filter((e) => e.kind === 'expense' && !e.paid);
+    const inc = items.filter((e) => e.kind === 'income' && !e.paid);
+    const wd = new Date(`${d}T12:00`).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
+    return html`<button type="button" class="fin-wday ${d === ui.wday ? 'sel' : ''} ${d === today ? 'today' : ''}" data-act="week-day" data-v="${d}">
+      <small>${d === today ? 'hoje' : wd}</small><strong>${Number(d.slice(8))}</strong>
+      <span class="fin-dots">${out.length ? html`<i class="out"></i>` : ''}${inc.length ? html`<i class="in"></i>` : ''}</span>
+      ${out.length ? html`<em class="amt">−${compact(sum(out, (e) => e.amount))}</em>` : html`<em> </em>`}
+    </button>`;
+  })}</div>
+  <div class="fin-week-day">
+    <h3>${selLabel}</h3>
+    ${selItems.length ? html`<div class="fin-list">${selItems.map(dayRow)}</div>` : html`<p class="fin-muted">Nada programado${ui.wday === today ? ' para hoje' : ' neste dia'}.</p>`}
+  </div>`;
+  const afterList = after.length ? html`<div class="fin-card fin-list">${after.map((e) => html`<div class="fv-left-row"><span class="fv-date in" title="${e.date.split('-').reverse().join('/')}"><small>daqui</small>${daysUntil(e.date)}<small>${daysUntil(e.date) === 1 ? 'dia' : 'dias'}</small></span>${dayRow(e)}</div>`)}</div>`
+    : html`<div class="fin-card fin-empty small"><p>Nada programado nas próximas semanas.</p></div>`;
+  const forecastNote = !daily ? 'sem contar mercado, comida e outros gastos do dia a dia' : dailyLeft(now) > 0 ? html`já descontando ${amt(dailyLeft(now))} que ainda devem sair no dia a dia (de ${amt(daily)} por mês)` : html`os ${amt(daily)} de gastos do dia a dia deste mês já foram lançados`;
+  const dailyBtn = html`<button type="button" class="fin-link" data-act="daily">${icon('edit')} ${daily ? 'Mudar gastos do dia a dia' : 'Incluir gastos do dia a dia'}</button>`;
+  const PAGES = ['Hoje', 'Esta semana', 'Próximos dias', 'Fim do mês'];
+  const pct = (v) => (bal > 0 ? Math.max(0, Math.min(100, (v / bal) * 100)) : 0);
+
   return html`
     <header class="fin-head fin-head-home">
       <div class="fin-head-row"><div class="fin-head-title"><p class="fin-sub">${hello}${name ? `, ${name}` : ''}</p></div>
         <div class="fin-head-actions">${eyeBtn()}<a class="fin-round m-only" href="#/inicio" title="Casamento" aria-label="Abrir o casamento">${icon('heart')}</a></div></div>
       ${coupleBanner()}
     </header>
-    <div class="fin-home2">
+
+    <div class="fin-home2 d-only">
       <div class="h2-left">
-      <section class="fin-card fin-today">
-        ${monthGauge(dt, weekday, monthName)}
-        <div class="fin-today-msg">
-          <p class="big">${todayOut.length ? html`Hoje vence ${listNames(todayOut)}.` : 'Sem gastos programados para hoje.'}</p>
-          ${todayIn.length ? html`<p>💰 Hoje entra ${listNames(todayIn)}.</p>` : ''}
-          <p>${weekOut.length ? html`Nos próximos 7 dias saem <b>${amt(sum(weekOut, (e) => e.amount))}</b> em ${weekOut.length} ${weekOut.length === 1 ? 'conta' : 'contas'}.` : 'Semana tranquila: nada a pagar nos próximos 7 dias.'}</p>
-          ${late.length ? html`<p class="red">⚠️ ${late.length === 1 ? 'Tem 1 conta atrasada' : `Tem ${late.length} contas atrasadas`} (${amt(sum(late, (e) => e.amount))}). <button type="button" class="fin-link" data-act="older">Resolver</button></p>` : ''}
-        </div>
-      </section>
-
-      <section class="fin-card fin-week">
-        <div class="fin-week-strip">${week.map((d) => {
-          const items = map.get(d) || [];
-          const out = items.filter((e) => e.kind === 'expense' && !e.paid);
-          const inc = items.filter((e) => e.kind === 'income' && !e.paid);
-          const wd = new Date(`${d}T12:00`).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
-          return html`<button type="button" class="fin-wday ${d === ui.wday ? 'sel' : ''} ${d === today ? 'today' : ''}" data-act="week-day" data-v="${d}">
-            <small>${d === today ? 'hoje' : wd}</small><strong>${Number(d.slice(8))}</strong>
-            <span class="fin-dots">${out.length ? html`<i class="out"></i>` : ''}${inc.length ? html`<i class="in"></i>` : ''}</span>
-            ${out.length ? html`<em class="amt">−${compact(sum(out, (e) => e.amount))}</em>` : html`<em> </em>`}
-          </button>`;
-        })}</div>
-        <div class="fin-week-day">
-          <h3>${selLabel}</h3>
-          ${selItems.length ? html`<div class="fin-list">${selItems.map(dayRow)}</div>` : html`<p class="fin-muted">Nada programado${ui.wday === today ? ' para hoje' : ' neste dia'}.</p>`}
-        </div>
-      </section>
-
+      <section class="fin-card fin-today">${monthGauge(dt, weekday, monthName)}${todayMsg}</section>
+      <section class="fin-card fin-week">${weekStrip}</section>
       <a class="fin-card fin-goto" href="#/fin/mes">${icon('calendar')}<span><b>Visão geral do mês</b><small>Calendário de ${monthLabel(now).toLowerCase()} com o previsto de cada dia</small></span>${icon('chevron')}</a>
       </div>
       <div class="h2-right">
@@ -372,19 +383,93 @@ function home() {
         <div class="fin-card fin-kpi fin-kpi-hero">
           <span class="fin-label">Previsão para o fim do mês</span>
           <strong class="fin-kpi-amt ${end < 0 ? 'neg' : 'pos'}">${amt(end)}</strong>
-          <small>${!daily ? 'sem contar mercado, comida e outros gastos do dia a dia' : dailyLeft(now) > 0 ? html`já descontando ${amt(dailyLeft(now))} que ainda devem sair no dia a dia (de ${amt(daily)} por mês)` : html`os ${amt(daily)} de gastos do dia a dia deste mês já foram lançados`}</small>
-          <button type="button" class="fin-link" data-act="daily">${icon('edit')} ${daily ? 'Mudar gastos do dia a dia' : 'Incluir gastos do dia a dia'}</button>
+          <small>${forecastNote}</small>
+          ${dailyBtn}
         </div>
       </section>
       <section class="fin-section fv-after">
         ${sectionHead('Depois desta semana', html`<a href="#/fin/mes">Mês inteiro</a>`)}
-        ${after.length ? html`<div class="fin-card fin-list">${after.map((e) => html`<div class="fv-left-row"><span class="fv-date in" title="${e.date.split('-').reverse().join('/')}"><small>daqui</small>${daysUntil(e.date)}<small>${daysUntil(e.date) === 1 ? 'dia' : 'dias'}</small></span>${dayRow(e)}</div>`)}</div>`
-          : html`<div class="fin-card fin-empty small"><p>Nada programado nas próximas semanas.</p></div>`}
+        ${afterList}
       </section>
-
       </div>
     </div>
+
+    <div class="fin-pager m-only">
+      <div class="fin-pages" data-pages>
+        <section class="fin-page" aria-label="Hoje">
+          <div class="fin-card fin-pcard fin-p-today">
+            ${monthGauge(dt, weekday, monthName, 'fin-month-grad-m')}
+            <div class="fin-p-money">
+              <button type="button" class="fin-p-bal" data-act="adjust" title="Ajustar saldo">
+                <span class="fin-label">Em conta</span>
+                <strong class="amt-big ${bal < 0 ? 'neg' : ''}">${amt(bal)}</strong>
+              </button>
+              <div class="fin-p-bar" role="img" aria-label="Do saldo, ${money(committed)} já está comprometido">
+                <span class="cards" style="width:${pct(cardsOpen)}%"></span><span class="bills" style="width:${pct(Math.min(billsLeft, Math.max(0, bal - cardsOpen)))}%"></span>
+              </div>
+              <div class="fin-p-split">
+                <div><span class="fin-label">Comprometido</span><b>${amt(committed)}</b>
+                  <small>${cardsOpen ? html`<i class="dot cards"></i>cartões ${amt(cardsOpen)}` : ''}${cardsOpen && billsLeft ? html`<br>` : ''}${billsLeft ? html`<i class="dot bills"></i>contas do mês ${amt(billsLeft)}` : ''}${!committed ? 'nada a pagar' : ''}</small></div>
+                <div><span class="fin-label">Livre</span><b class="${free < 0 ? 'neg' : 'pos'}">${amt(free)}</b><small>depois de pagar tudo</small></div>
+              </div>
+              ${late.length ? html`<button type="button" class="fin-p-alert" data-act="older">⚠️ ${late.length === 1 ? '1 conta atrasada' : `${late.length} contas atrasadas`} · ${amt(sum(late, (e) => e.amount))}</button>` : ''}
+            </div>
+          </div>
+        </section>
+
+        <section class="fin-page" aria-label="Esta semana">
+          <h2 class="fin-page-title">Esta semana</h2>
+          <div class="fin-card fin-pcard">${todayMsg}</div>
+          <div class="fin-card fin-week">${weekStrip}</div>
+        </section>
+
+        <section class="fin-page" aria-label="Próximos dias">
+          <h2 class="fin-page-title">Próximos dias</h2>
+          ${nextIn ? html`<div class="fin-card fin-pcard fin-p-next"><span class="fin-label">Próxima entrada</span><b class="pos">${amt(nextIn.amount)}</b><small>${nextIn.description} · ${whenLabel(daysUntil(nextIn.date))}</small></div>` : ''}
+          ${afterList}
+        </section>
+
+        <section class="fin-page" aria-label="Fim do mês">
+          <h2 class="fin-page-title">Fim do mês</h2>
+          <div class="fin-card fin-pcard fin-p-end">
+            <span class="fin-label">Vai sobrar em ${dayIn(now, 31).split('-').reverse().slice(0, 2).join('/')}</span>
+            <strong class="amt-big ${end < 0 ? 'neg' : 'pos'}">${amt(end)}</strong>
+            <small>${forecastNote}</small>
+            ${dailyBtn}
+          </div>
+          <a class="fin-card fin-goto" href="#/fin/mes">${icon('calendar')}<span><b>Visão geral do mês</b><small>Calendário de ${monthLabel(now).toLowerCase()} com o previsto de cada dia</small></span>${icon('chevron')}</a>
+        </section>
+      </div>
+      <div class="fin-pager-dots" role="tablist" aria-label="Páginas do início">${PAGES.map((t, i) => html`<button type="button" class="${i === ui.homePage ? 'on' : ''}" data-act="home-page" data-v="${i}" aria-label="${t}" title="${t}"></button>`)}</div>
+    </div>
   `;
+}
+
+// Abertura no celular: "Olá, Fulana" no meio da tela, como o "hello" do iPhone. Uma vez por abertura do app.
+function showHello() {
+  try { if (sessionStorage.getItem('fin-hello')) return; sessionStorage.setItem('fin-hello', '1'); } catch { /* sem sessionStorage: mostra mesmo assim */ }
+  if (!matchMedia('(max-width: 1023px)').matches || document.querySelector('.fin-hello')) return;
+  const name = firstName(state.user?.name);
+  // Cada letra numa cor do degradê azul → roxo → rosa → laranja.
+  const total = 4 + name.length;
+  const hue = (i) => Math.round(212 + (168 * i) / Math.max(1, total - 1)) % 360;
+  const letters = (t, from) => [...t].map((ch, i) => `<span style="--i:${from + i};--c:hsl(${hue(from + i)} 82% 52%)">${ch === ' ' ? '&nbsp;' : String(html`${ch}`)}</span>`).join('');
+  const ov = document.createElement('div');
+  ov.className = 'fin-hello';
+  ov.setAttribute('aria-hidden', 'true');
+  ov.innerHTML = `<div class="fin-hello-text"><span class="w1">${letters('Olá,', 0)}</span>${name ? `<span class="w2">${letters(name, 4)}</span>` : ''}</div>`;
+  document.body.append(ov);
+  document.querySelector('.fin-pager')?.classList.add('after-hello');
+  let done = false;
+  const out = () => {
+    if (done) return;
+    done = true;
+    ov.classList.add('out');
+    document.querySelector('.fin-pager')?.classList.add('reveal');
+    setTimeout(() => ov.remove(), 650);
+  };
+  ov.addEventListener('click', out);
+  setTimeout(out, matchMedia('(prefers-reduced-motion: reduce)').matches ? 900 : 2300);
 }
 
 // Pendências de meses anteriores (abre numa janela, sem poluir o mês atual).
@@ -1040,6 +1125,24 @@ function togglePaid(e) {
 }
 
 export function mountFin(el, emitView) {
+  // Início no celular: páginas que deslizam para o lado, com pontinhos embaixo.
+  const pages = el.querySelector('[data-pages]');
+  if (pages) {
+    const kids = [...pages.children];
+    const offset = (i) => kids[i].offsetLeft - kids[0].offsetLeft;
+    const dots = [...el.querySelectorAll('.fin-pager-dots button')];
+    pages.scrollLeft = offset(Math.min(ui.homePage, kids.length - 1));
+    let raf = 0;
+    pages.addEventListener('scroll', () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        let best = 0;
+        kids.forEach((_, i) => { if (Math.abs(offset(i) - pages.scrollLeft) < Math.abs(offset(best) - pages.scrollLeft)) best = i; });
+        if (best !== ui.homePage) { ui.homePage = best; dots.forEach((d, i) => d.classList.toggle('on', i === best)); }
+      });
+    }, { passive: true });
+    showHello();
+  }
   // Fita de dias do extrato: deixa o dia escolhido (ou hoje) no meio.
   const strip = el.querySelector('.fin-dstrip');
   const focusDay = strip && (strip.querySelector('.fin-dday.on') || strip.querySelector('.fin-dday.today'));
@@ -1059,6 +1162,7 @@ export function mountFin(el, emitView) {
       case 'seg-plan': ui.plan = a.dataset.v; break; // o link segue para #/fin/planejar
       case 'ext-day': ui.extDay = a.dataset.v; emitView(); break;
       case 'ext-add': addSheet(); break;
+      case 'home-page': { const pg = el.querySelector('[data-pages]'); const k = pg?.children[Number(a.dataset.v)]; if (k) pg.scrollTo({ left: k.offsetLeft - pg.children[0].offsetLeft, behavior: 'smooth' }); break; }
       case 'ext-filter': ui.ext = a.dataset.v; if (location.hash.startsWith('#/fin/extrato')) emitView(); break;
       case 'entry': openEntry(findEntry(id, a.dataset.month)); break;
       case 'toggle-paid': togglePaid(findEntry(id, a.dataset.month)); break;

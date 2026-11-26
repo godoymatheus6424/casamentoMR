@@ -499,6 +499,7 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
   .fin-home > .fin-notice { grid-column: 1 / -1; }
   .fin-cats { grid-template-columns: auto 1fr; gap: 32px; padding: 20px 24px; }
   .fin-thead.d-only { display: grid !important; }
+  .fin-home2.d-only { display: grid !important; }
   .fin-table .fin-list { padding: 0; }
   .fin-day-head { padding: 12px 16px 6px; background: rgba(118, 118, 128, .05); }
 
@@ -782,3 +783,76 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
 .fin-prompt code { white-space: pre-wrap; font-size: 13px; line-height: 1.45; }
 .fin-prompt { grid-template-columns: 1fr; justify-items: start; gap: 8px; }
 .fin-prompt code { width: 100%; }
+/* =========================================================================
+   Início no celular: páginas que deslizam para o lado (uma ideia por tela)
+   ========================================================================= */
+.fin-pager { margin: 0 -16px; }
+.fin-pages { display: flex; align-items: flex-start; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+.fin-pages::-webkit-scrollbar { display: none; }
+.fin-page {
+  flex: 0 0 100%; min-width: 0; scroll-snap-align: start; scroll-snap-stop: always;
+  display: flex; flex-direction: column; gap: 12px; padding: 2px 16px 8px;
+  min-height: calc(100svh - var(--safe-b) - env(safe-area-inset-top, 0px) - 200px);
+}
+.fin-page:first-child { justify-content: center; }
+.fin-page .fin-card, .fin-page .fin-section { margin: 0; }
+.fin-page-title { font-size: 30px; font-weight: 800; letter-spacing: -.025em; padding: 6px 4px 2px; }
+.fin-pcard { border-radius: 28px; padding: 22px 20px; background: linear-gradient(160deg, rgba(255, 255, 255, .9), rgba(232, 241, 255, .62)); }
+.fin-pcard .fin-today-msg { justify-items: start; text-align: left; }
+
+/* Página 1: dia + dinheiro */
+.fin-p-today { display: grid; justify-items: center; text-align: center; gap: 16px; padding: 20px 20px 20px; }
+.fin-p-today .fin-gauge { width: min(100%, 236px); }
+.fin-p-today .fin-gauge-center strong { font-size: 60px; }
+.fin-p-money { width: 100%; display: grid; gap: 14px; }
+.fin-p-bal { display: grid; justify-items: center; gap: 2px; border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.amt-big { font-size: 36px; font-weight: 800; letter-spacing: -.035em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.amt-big.neg, .fin-p-split b.neg { color: var(--f-red-text); }
+.amt-big.pos, .fin-p-split b.pos { color: var(--f-green-text); }
+.fin-p-bar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: rgba(52, 199, 89, .28); }
+.fin-p-bar span { height: 100%; transition: width .6s cubic-bezier(.2, .8, .2, 1); }
+.fin-p-bar .cards, .fin-p-split .dot.cards { background: #5e5ce6; }
+.fin-p-bar .bills, .fin-p-split .dot.bills { background: #ff9f0a; }
+.fin-p-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; text-align: left; }
+.fin-p-split > div:last-child { text-align: right; }
+.fin-p-split b { display: block; font-size: 21px; font-weight: 700; letter-spacing: -.02em; margin-top: 1px; }
+.fin-p-split small { display: block; margin-top: 3px; font-size: 12px; line-height: 1.45; color: var(--muted); }
+.fin-p-split .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+.fin-p-alert { justify-self: center; border: 0; border-radius: 999px; padding: 8px 14px; background: rgba(255, 59, 48, .12); color: var(--f-red-text); font: 600 13.5px/1.2 var(--sans); cursor: pointer; }
+
+/* Páginas seguintes */
+.fin-p-next { display: grid; gap: 2px; }
+.fin-p-next b { font-size: 30px; font-weight: 800; letter-spacing: -.03em; }
+.fin-p-next small { color: var(--muted); font-size: 14px; }
+.fin-p-end { display: grid; justify-items: center; text-align: center; gap: 6px; padding: 30px 20px 24px; }
+.fin-p-end .amt-big { font-size: 46px; }
+.fin-p-end small { color: var(--muted); font-size: 13.5px; max-width: 300px; }
+
+/* Pontinhos das páginas: ficam visíveis logo acima da barra de abas */
+.fin-pager-dots { position: sticky; bottom: calc(var(--safe-b) + 92px); z-index: 5; display: flex; justify-content: center; gap: 6px; width: max-content; margin: 6px auto 0; padding: 7px 10px; border-radius: 999px;
+  background: rgba(255, 255, 255, .55); -webkit-backdrop-filter: var(--f-blur); backdrop-filter: var(--f-blur); box-shadow: 0 2px 10px rgba(31, 38, 64, .08); }
+.fin-pager-dots button { width: 7px; height: 7px; padding: 0; border: 0; border-radius: 999px; background: rgba(60, 60, 67, .28); cursor: pointer; transition: width .25s, background .25s; }
+.fin-pager-dots button.on { width: 20px; background: var(--ink); }
+
+/* "Olá, Fulana" ao abrir o app no celular */
+.fin-hello {
+  position: fixed; inset: 0; z-index: 3000; display: grid; place-items: center; cursor: pointer;
+  background: radial-gradient(circle at 18% 12%, #d4e6ff 0, transparent 52%), radial-gradient(circle at 88% 58%, #ffdbe9 0, transparent 50%), radial-gradient(circle at 28% 96%, #d8f6e3 0, transparent 52%), #f6f6f9;
+  transition: opacity .6s ease, transform .6s ease, filter .6s ease;
+}
+.fin-hello.out { opacity: 0; transform: scale(1.08); filter: blur(6px); pointer-events: none; }
+.fin-hello-text { display: grid; justify-items: center; line-height: 1.02; font-family: var(--serif); font-weight: 800; letter-spacing: -.045em; padding: 0 20px; text-align: center; }
+.fin-hello-text .w1 { font-size: clamp(64px, 23vw, 120px); }
+.fin-hello-text .w2 { font-size: clamp(44px, 15vw, 86px); }
+.fin-hello-text span span {
+  display: inline-block; color: var(--c, #1c1c1e); opacity: 0; filter: blur(14px); transform: translateY(20px) scale(.94);
+  animation: fin-hello-in .95s cubic-bezier(.2, .8, .2, 1) forwards; animation-delay: calc(var(--i) * 65ms + 150ms);
+}
+@keyframes fin-hello-in { to { opacity: 1; filter: blur(0); transform: none; } }
+.fin-pager.after-hello { opacity: 0; }
+.fin-pager.reveal { animation: fin-reveal .75s cubic-bezier(.2, .8, .2, 1) forwards; }
+@keyframes fin-reveal { from { opacity: 0; transform: translateY(16px) scale(.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .fin-hello-text span span { animation: none; opacity: 1; filter: none; transform: none; }
+  .fin-pager.reveal { animation: none; opacity: 1; }
+}
