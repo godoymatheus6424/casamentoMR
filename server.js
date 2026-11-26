@@ -780,7 +780,7 @@ route('POST', '/api/password/reset', async ({ req, res }) => {
 route('POST', '/api/logout', ({ req, res, session }) => {
   S('DELETE FROM sessions WHERE token_hash = ?').run(session.tokenHash);
   send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
-}, { ws: false });
+});
 
 route('GET', '/api/me', ({ req, res, session }) => {
   const headers = {};
@@ -791,7 +791,7 @@ route('GET', '/api/me', ({ req, res, session }) => {
     workspace: session.workspace_id ? workspaceInfo(session) : null,
     workspaceCount: S('SELECT COUNT(*) AS n FROM memberships WHERE user_id = ?').get(session.user_id).n,
   }, headers);
-}, { ws: false });
+});
 
 route('PUT', '/api/me', async ({ req, res, session }) => {
   const b = await readJson(req);
@@ -805,7 +805,7 @@ route('PUT', '/api/me', async ({ req, res, session }) => {
   }
   S('UPDATE users SET name = ?, email = ? WHERE id = ?').run(name, email, session.user_id);
   send(res, 200, { ok: true, name, email });
-}, { ws: false });
+});
 
 // Excluir a própria conta (LGPD): assessoria e convidados. Quem criou um casamento exclui pelo casamento.
 route('DELETE', '/api/me', async ({ req, res, session }) => {
@@ -822,7 +822,7 @@ route('DELETE', '/api/me', async ({ req, res, session }) => {
   S('DELETE FROM files WHERE owner_user_id = ?').run(session.user_id);
   S('DELETE FROM users WHERE id = ?').run(session.user_id); // acessos, sessões e links saem em cascata
   send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
-}, { ws: false });
+});
 
 route('POST', '/api/password', async ({ req, res, session }) => {
   const b = await readJson(req);
@@ -834,7 +834,7 @@ route('POST', '/api/password', async ({ req, res, session }) => {
   S('UPDATE users SET pass_hash = ? WHERE id = ?').run(hash, user.id);
   S('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').run(user.id, session.tokenHash);
   send(res, 200, { ok: true });
-}, { ws: false });
+});
 
 // Pessoas com acesso ao casamento
 route('GET', '/api/users', ({ res, session }) => {
@@ -1002,7 +1002,7 @@ route('POST', '/api/planner/join', async ({ req, res, session }) => {
     S('UPDATE sessions SET workspace_id = ? WHERE token_hash = ?').run(ws.id, session.tokenHash);
   });
   send(res, 200, { ok: true, wedding: ws.name });
-}, { ws: false });
+});
 
 // Casamentos de que a pessoa participa (assessoras costumam ter vários)
 route('GET', '/api/workspaces', ({ res, session }) => {
@@ -1013,7 +1013,7 @@ route('GET', '/api/workspaces', ({ res, session }) => {
     const s = JSON.parse(w.settings);
     return { id: w.id, name: w.name, role: w.role, date: s.date || '', place: s.receptionPlace || s.ceremonyPlace || '', access: workspaceAccess(w), current: w.id === session.workspace_id };
   }).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999')));
-}, { ws: false });
+});
 
 route('POST', '/api/workspaces/switch', async ({ req, res, session }) => {
   const id = String((await readJson(req)).id || '');
@@ -1023,7 +1023,7 @@ route('POST', '/api/workspaces/switch', async ({ req, res, session }) => {
   S('UPDATE sessions SET workspace_id = ? WHERE token_hash = ?').run(id, session.tokenHash);
   S('UPDATE users SET last_workspace_id = ? WHERE id = ?').run(id, session.user_id);
   send(res, 200, { ok: true });
-}, { ws: false });
+});
 
 // Quem não é dono(a) pode sair de um casamento (ex.: a assessoria ao fim do contrato).
 route('POST', '/api/workspaces/leave', ({ req, res, session }) => {
@@ -1047,12 +1047,12 @@ route('GET', '/api/sessions', ({ res, session }) => {
   const rows = S('SELECT token_hash, created_at, last_seen, ip, ua FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY last_seen DESC')
     .all(session.user_id, Date.now());
   send(res, 200, rows.map((r) => ({ createdAt: r.created_at, lastSeen: r.last_seen, ip: r.ip, ua: r.ua, current: r.token_hash === session.tokenHash })));
-}, { ws: false });
+});
 
 route('POST', '/api/sessions/revoke-others', ({ res, session }) => {
   const r = S('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').run(session.user_id, session.tokenHash);
   send(res, 200, { ok: true, removed: Number(r.changes) });
-}, { ws: false });
+});
 
 // Dados do casamento
 route('GET', '/api/data', ({ res, session }) => {
@@ -1348,6 +1348,87 @@ route('POST', '/api/fin/:coll/delete', async ({ req, res, params, session }) => 
   const n = tx(() => b.ids.reduce((acc, id) => acc + S('DELETE FROM fin_items WHERE id = ? AND coll = ? AND user_id = ?').run(id, coll, session.user_id).changes, 0));
   send(res, 200, { ok: true, deleted: n });
 });
+
+// ---------------------------------------------------------------------------
+// Atalhos do iPhone: lançar gasto ou recebimento de fora do site (Central de Controle, botão de Ação, Siri).
+// O Atalho não tem o login do site: usa uma chave pessoal, que só pode lançar (não lê nada) e pode ser
+// trocada ou apagada em Ajustes. Do banco só se guarda o hash da chave.
+// ---------------------------------------------------------------------------
+route('GET', '/api/fin-token', ({ res, session }) => {
+  checkFin(session);
+  const t = S('SELECT created_at, last_used_at FROM fin_tokens WHERE user_id = ?').get(session.user_id);
+  send(res, 200, t ? { active: true, createdAt: t.created_at, lastUsedAt: t.last_used_at } : { active: false });
+});
+route('POST', '/api/fin-token', ({ res, session }) => {
+  checkFin(session);
+  const token = `bx_${crypto.randomBytes(24).toString('base64url')}`;
+  const now = Date.now();
+  S('INSERT INTO fin_tokens (user_id, token_hash, created_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET token_hash = excluded.token_hash, created_at = excluded.created_at, last_used_at = NULL')
+    .run(session.user_id, sha256(token), now);
+  send(res, 201, { token, createdAt: now });
+});
+route('DELETE', '/api/fin-token', ({ res, session }) => {
+  checkFin(session);
+  S('DELETE FROM fin_tokens WHERE user_id = ?').run(session.user_id);
+  send(res, 200, { ok: true });
+});
+
+const normTxt = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+// Valor como vem do Atalho: número, "45,90", "1.234,56", "R$ 30" ou "45.9".
+function parseAmount(v) {
+  if (typeof v === 'number') return v;
+  let s = String(v ?? '').replace(/[^\d,.-]/g, '');
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
+  return Number(s);
+}
+const todayBR = () => new Intl.DateTimeFormat('en-CA', { timeZone: process.env.TZ || 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+const brl = (n) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+function textReply(res, status, text) {
+  res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(text);
+}
+
+route('POST', '/api/atalho', async ({ req, res }) => {
+  const ip = clientIp(req);
+  const rl = rateBucket(`atalho:${ip}`, 20);
+  const b = await readJson(req);
+  const auth = String(req.headers.authorization || '');
+  const token = String(b.chave || (auth.startsWith('Bearer ') ? auth.slice(7) : '')).trim();
+  const row = token ? S('SELECT user_id FROM fin_tokens WHERE token_hash = ?').get(sha256(token)) : null;
+  const member = row && S(`SELECT 1 FROM memberships WHERE user_id = ? AND role IN (${[...MANAGER_ROLES].map(() => '?').join(',')}) LIMIT 1`).get(row.user_id, ...MANAGER_ROLES);
+  if (!row || !member) { rl.n++; return textReply(res, 401, 'Chave do atalho inválida. Gere uma nova em Finanças › Ajustes › Atalho do iPhone.'); }
+  const userId = row.user_id;
+
+  const tipo = normTxt(b.tipo);
+  const kind = /^(recebimento|receita|entrada|income|recebi|ganho)/.test(tipo) ? 'income' : 'expense';
+  const amount = Math.round(parseAmount(b.valor) * 100) / 100;
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) return textReply(res, 400, 'Valor inválido. Digite só o número, por exemplo 45,90.');
+  const description = String(b.descricao || b.descrição || '').trim().slice(0, 200) || (kind === 'income' ? 'Recebimento' : 'Gasto');
+
+  finSeed(userId);
+  const items = finItems(userId);
+  const sameKind = items.transactions.filter((t) => t.kind === kind && !t.skipped).sort((x, y) => (y._created || 0) - (x._created || 0));
+  const findByName = (list, name) => { const n = normTxt(name); return n ? list.find((x) => normTxt(x.name) === n) || list.find((x) => normTxt(x.name).includes(n)) : null; };
+  // Categoria: a que veio pelo nome; senão a do último lançamento com a mesma descrição; senão uma de nome igual à descrição.
+  const cats = items.categories.filter((c) => c.kind === kind);
+  const prev = sameKind.find((t) => normTxt(t.description) === normTxt(description));
+  const cat = findByName(cats, b.categoria) || (prev?.categoryId && cats.find((c) => c.id === prev.categoryId)) || findByName(cats, description) || null;
+  // Onde: cartão pelo nome (só gasto); senão conta pelo nome; senão a do último lançamento parecido; senão a mais usada recentemente.
+  const card = kind === 'expense' ? findByName(items.cards, b.cartao || b.cartão) : null;
+  const lastAcc = (prev && !prev.cardId && prev.accountId) || sameKind.find((t) => t.accountId)?.accountId;
+  const acc = card ? null : findByName(items.accounts, b.conta) || items.accounts.find((a) => a.id === lastAcc) || items.accounts[0];
+  if (!card && !acc) return textReply(res, 400, 'Cadastre uma conta nas finanças antes de usar o atalho.');
+
+  const data = cleanData({
+    kind, amount, description, date: todayBR(), categoryId: cat?.id || '', party: '', notes: 'Lançado pelo Atalho do iPhone',
+    paid: !card, accountId: card ? '' : acc.id, cardId: card ? card.id : '',
+  });
+  finInsert(userId, 'transactions', data);
+  S('UPDATE fin_tokens SET last_used_at = ? WHERE user_id = ?').run(Date.now(), userId);
+  const where = card ? `cartão ${card.name}` : acc.name;
+  textReply(res, 201, `${kind === 'income' ? 'Recebimento' : 'Gasto'} de ${brl(amount)} lançado: ${description}${cat ? ` (${cat.name})` : ''} · ${where}`);
+}, { auth: false });
 
 // ---------------------------------------------------------------------------
 // Pagamentos na agenda (arquivo .ics)

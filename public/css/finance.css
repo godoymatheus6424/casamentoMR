@@ -756,3 +756,24 @@ kbd { font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 6px; backgr
   .fin-tx-card { padding: 14px 14px 14px 16px; }
   .fin-tx-amt { font-size: 19px; }
 }
+/* Atalho do iPhone (Ajustes) */
+.fin-shortcut { display: grid; gap: 12px; font-size: 15px; line-height: 1.45; }
+.fin-shortcut h3 { font-size: 17px; font-weight: 700; margin-top: 8px; }
+.fin-shortcut-key { display: grid; gap: 12px; margin: 0; }
+.fin-code-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; }
+.fin-code-row .fin-label, .fin-code-row small { grid-column: 1 / -1; }
+.fin-code-row code { min-width: 0; overflow-wrap: anywhere; font-size: 13.5px; padding: 8px 10px; border-radius: 10px; background: rgba(118, 118, 128, .1); user-select: all; -webkit-user-select: all; }
+.fin-code-row > span:not(.fin-label) { grid-column: 1 / -1; font-weight: 600; }
+.fin-copy { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 10px; padding: 8px 11px; background: rgba(0, 122, 255, .1); color: var(--accent); font: 600 13.5px/1 var(--sans); cursor: pointer; }
+.fin-copy .ic { width: 15px; height: 15px; }
+.fin-shortcut-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.fin-btn.danger { color: var(--f-red-text); background: rgba(255, 59, 48, .1); }
+.fin-btn:disabled { opacity: .5; cursor: default; }
+.fin-err { color: var(--f-red-text); font-weight: 600; }
+.fin-steps { display: grid; gap: 8px; padding-left: 22px; margin: 0; }
+.fin-steps ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.fin-shortcut code { font-size: 13px; padding: 1px 5px; border-radius: 6px; background: rgba(118, 118, 128, .12); }
+.fin-shortcut .fin-code-row code { padding: 8px 10px; }
+.fin-more summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.fin-more[open] summary { margin-bottom: 6px; }
+.fin-more ul { padding-left: 18px; display: grid; gap: 3px; }

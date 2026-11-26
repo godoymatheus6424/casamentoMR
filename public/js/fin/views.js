@@ -11,6 +11,7 @@ import {
   goalForm, goalDepositForm, entryInfo, adjustBalanceForm, dailyBudgetForm,
 } from './forms.js';
 import { state } from '../store.js';
+import { api } from '../api.js';
 import { names } from '../domain.js';
 import { html, icon, raw, money, fmtDate, todayISO, shiftISO, sum, norm, run, downloadCSV, csvMoney, toast, openModal } from '../ui.js';
 
@@ -869,6 +870,11 @@ function ajustes() {
         <button type="button" class="fin-switch-row fin-row-btn" data-act="adjust"><span class="fin-row-main"><span class="fin-row-title">Ajustar saldo das contas</span><span class="fin-row-meta">Quando o saldo do app não bater com o do banco.</span></span>${icon('chevron')}</button>
       </div>
     </section>
+    <section class="fin-section">${sectionHead('Atalho do iPhone')}
+      <div class="fin-card fin-list">
+        <button type="button" class="fin-switch-row fin-row-btn" data-act="shortcut"><span class="fin-row-main"><span class="fin-row-title">Lançar pela Central de Controle</span><span class="fin-row-meta">Um atalho do iPhone pergunta o valor e a descrição e lança na hora, sem abrir o site. Também funciona no botão de Ação e na Siri.</span></span>${icon('chevron')}</button>
+      </div>
+    </section>
     <section class="fin-section">${sectionHead('Fixos')}
       <div class="fin-card fin-list">
         ${sw('autoFixed', st.autoFixed !== false, 'Fixos se confirmam sozinhos no dia', 'Salário, aluguel, contas: no dia, contam como recebidos ou pagos, sem você precisar confirmar. Se o valor for outro (luz, água) ou não acontecer, toque nele para ajustar ou pular.')}
@@ -889,6 +895,93 @@ function ajustes() {
     <p class="fin-foot fin-version">Versão do site: <b>${state.status?.build || '—'}</b>${state.status?.startedAt ? html` · no ar desde ${new Date(state.status.startedAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}</p>
     </div>
   `;
+}
+
+// Atalho do iPhone: chave pessoal + passo a passo para montar o atalho no app Atalhos.
+async function shortcutDialog() {
+  const url = `${location.origin}/api/atalho`;
+  const st = { info: null, token: '', busy: false, err: '' };
+  const copyBtn = (v, label) => html`<button type="button" class="fin-copy" data-copy="${v}">${icon('paste')}<span>${label}</span></button>`;
+  const codeRow = (label, v, hint = '') => html`<div class="fin-code-row"><span class="fin-label">${label}</span><code>${v}</code>${hint ? html`<small class="fin-muted">${hint}</small>` : ''}${copyBtn(v, 'Copiar')}</div>`;
+  const m = openModal({
+    title: 'Atalho do iPhone',
+    body: () => {
+      if (!st.info) return html`<div class="fin-loading"><span class="spinner"></span></div>`;
+      const on = st.info.active;
+      const used = st.info.lastUsedAt ? `usada pela última vez em ${new Date(st.info.lastUsedAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : 'ainda não usada';
+      return html`<div class="fin-shortcut">
+        <p>Crie um atalho no app <b>Atalhos</b> que pergunta <b>quanto</b> e <b>com o quê</b> e lança o gasto direto nas suas finanças. Depois coloque esse atalho na <b>Central de Controle</b>, no <b>botão de Ação</b> ou chame pela <b>Siri</b>.</p>
+        ${st.err ? html`<p class="fin-err">${st.err}</p>` : ''}
+        <div class="fin-card fin-shortcut-key">
+          ${codeRow('Endereço', url)}
+          ${st.token ? codeRow('Sua chave', st.token, 'Copie agora: por segurança ela não aparece de novo. Se perder, é só gerar outra.')
+            : html`<div class="fin-code-row"><span class="fin-label">Sua chave</span><span>${on ? html`Ligada · ${used}` : 'Nenhuma chave ainda'}</span></div>`}
+          <div class="fin-shortcut-actions">
+            <button type="button" class="fin-btn" data-sc="new" ${st.busy ? raw('disabled') : ''}>${on ? 'Gerar nova chave' : 'Gerar chave'}</button>
+            ${on ? html`<button type="button" class="fin-btn ghost danger" data-sc="off" ${st.busy ? raw('disabled') : ''}>Desligar</button>` : ''}
+          </div>
+          ${on && !st.token ? html`<small class="fin-muted">Gerar uma nova chave desliga a anterior: atualize o atalho com a nova.</small>` : ''}
+        </div>
+        <p class="fin-muted">A chave só serve para lançar gastos e recebimentos; com ela não dá para ver nada das suas finanças. Não compartilhe.</p>
+
+        <h3>Montar o atalho "Lançar gasto"</h3>
+        <ol class="fin-steps">
+          <li>Abra o app <b>Atalhos</b>, toque em <b>+</b> e dê o nome <b>Lançar gasto</b>.</li>
+          <li>Adicione a ação <b>Pedir Entrada</b>: tipo <b>Número</b>, pergunta <i>"Quanto?"</i>.</li>
+          <li>Adicione outra <b>Pedir Entrada</b>: tipo <b>Texto</b>, pergunta <i>"Com o quê?"</i>.</li>
+          <li>Adicione <b>Obter Conteúdo do URL</b>, cole o <b>endereço</b> acima e toque na seta para abrir as opções:
+            <ul>
+              <li>Método: <b>POST</b> · Corpo da Solicitação: <b>JSON</b></li>
+              <li>Adicione 4 campos do tipo Texto:<br>
+                <code>chave</code> → cole a sua chave<br>
+                <code>tipo</code> → <code>gasto</code><br>
+                <code>valor</code> → a variável <b>Entrada Fornecida</b> do "Quanto?"<br>
+                <code>descricao</code> → a variável <b>Entrada Fornecida</b> do "Com o quê?"</li>
+            </ul>
+          </li>
+          <li>Adicione <b>Mostrar Notificação</b> com a variável <b>Conteúdo do URL</b>. Ela confirma o que foi lançado.</li>
+        </ol>
+        <p class="fin-muted">Para recebimentos, duplique o atalho, chame de <b>Lançar recebimento</b> e troque <code>gasto</code> por <code>recebimento</code>.</p>
+
+        <h3>Colocar na Central de Controle</h3>
+        <ol class="fin-steps">
+          <li>Abra a Central de Controle (deslize do canto de cima à direita).</li>
+          <li>Toque e segure num espaço vazio, toque em <b>Adicionar um Controle</b> e procure <b>Atalho</b>.</li>
+          <li>Escolha <b>Lançar gasto</b>. Pronto: um toque abre as perguntas.</li>
+        </ol>
+        <p class="fin-muted">Precisa de iOS 18 ou mais novo. Em iPhones com botão de Ação: Ajustes › Botão de Ação › Atalho. Pela Siri: "E aí Siri, lançar gasto".</p>
+
+        <details class="fin-more"><summary>Campos opcionais</summary>
+          <p class="fin-muted">A categoria e a conta são escolhidas sozinhas: o mesmo que você usou da última vez para essa descrição (ex.: "Mercado"). Se quiser fixar, adicione no JSON:</p>
+          <ul class="fin-muted">
+            <li><code>categoria</code> → nome da categoria (ex.: Mercado)</li>
+            <li><code>conta</code> → nome da conta (ex.: Nubank)</li>
+            <li><code>cartao</code> → nome do cartão, para lançar como compra no cartão</li>
+          </ul>
+        </details>
+      </div>`;
+    },
+    onMount: (mm) => {
+      mm.body.querySelectorAll('[data-copy]').forEach((b) => {
+        b.onclick = async () => {
+          try { await navigator.clipboard.writeText(b.dataset.copy); toast('Copiado'); } catch { toast('Não deu para copiar: toque e segure no texto para copiar.'); }
+        };
+      });
+      mm.body.querySelectorAll('[data-sc]').forEach((b) => {
+        b.onclick = async () => {
+          if (b.dataset.sc === 'off' && !confirm('Desligar a chave? O atalho para de funcionar até você gerar outra.')) return;
+          st.busy = true; st.err = ''; mm.render();
+          try {
+            if (b.dataset.sc === 'new') { const r = await api('POST', '/api/fin-token'); st.token = r.token; st.info = { active: true, createdAt: r.createdAt, lastUsedAt: null }; }
+            else { await api('DELETE', '/api/fin-token'); st.token = ''; st.info = { active: false }; }
+          } catch (e) { st.err = e.message; }
+          st.busy = false; mm.render();
+        };
+      });
+    },
+  });
+  try { st.info = await api('GET', '/api/fin-token'); } catch (e) { st.info = { active: false }; st.err = e.message; }
+  m.render();
 }
 
 // ---------------------------------------------------------------------------
@@ -968,6 +1061,7 @@ export function mountFin(el, emitView) {
       case 'plan-wedding': location.hash = '#/orcamento?pagamentos'; break;
       case 'adjust': adjustBalanceForm(); break;
       case 'daily': dailyBudgetForm(); break;
+      case 'shortcut': shortcutDialog(); break;
       case 'older': olderSheet(); break;
       case 'rec': {
         const src = sources().find((s) => s.owner === a.dataset.owner);
